@@ -3,9 +3,15 @@
 This repo (`D:/RLBotTraining/rocketsim`) is the RocketSim C++ simulation core (a clone of
 `https://github.com/ZealanL/RocketSim`). Active plans for it:
 
-- **T13 — Native Ball Attach (C++):** add `GameMode::SPIKE_RUSH`/`GRIDIRON` + a `BallState.AttachInfo`
-  weld (rotating offset, `ω × offset` release, serialize-safe attach state). Requires CMake build +
-  wheel rebuild.
+- **T13 — Native Ball Attach (C++) [v2 REWORK]:** Spike Rush and Gridiron are **distinct** modes.
+  Spike Rush = soccar 3v3, spikes activate 2s after kickoff, touch attaches at contact point, boost
+  locked while carrying, `CarControls.powerup` releases, touching the carrier instantly demos+steals.
+  Gridiron = 4v4 football, roof-attach, no release button (double-jump fumble / flip lob / dodge
+  spiral), steal-on-touch (0.5s invuln), opponent-bump fumble, wall-ride fumble, 2s re-acquire
+  lockout, kickoff-after-goal attaches to conceding team, first-to-50. Adds `BallState.AttachInfo`
+  (`attachedCarId`, `lastCarrierId`, `localOffset`, timers) + `CarControls.powerup`. Requires CMake
+  build + wheel rebuild. **Source rework NOT yet implemented** (v1 identical-mechanic code is in
+  place at v2.2.2; v2 spec below is implementation-ready for a code-capable mode).
   [T13 - Native Ball Attach (C++).md](./T13%20-%20Native%20Ball%20Attach%20(C++).md)
 - **T14 — Dropshot Exposure:** the core ALREADY implements dropshot natively; this plan binds the
   existing `GameMode.DROPSHOT` / `DropshotTilesState` / `Ball.DropshotInfo` in the pybind layer and
@@ -17,9 +23,11 @@ This repo (`D:/RLBotTraining/rocketsim`) is the RocketSim C++ simulation core (a
   (Owned by the bindings/rlgym tracks, not the rocketsim core.)
   [T16 - Ball-Attach & Dropshot Bindings + rlgym Routing (handoff).md](./T16%20-%20Ball-Attach%20%26%20Dropshot%20Bindings%20+%20rlgym%20Routing%20(handoff).md)
 
-**Status (Agent C / rocketsim core):** T13 core C++ is implemented and the core library builds clean
-at v2.2.2; T14 confirmed already-native (no core change). The wheel rebuild + rlgym routing are
-cross-repo and captured in T16.
+**Status (Agent C / rocketsim core):** T13 v1 (identical-mechanic sticky puck) is in place at v2.2.2;
+the **v2 rework** (distinct Spike Rush/Gridiron mechanics, `CarControls.powerup`, `lastCarrierId`,
+football shape, 2s arming, steal/fumble/invuln/lockout rules) is **specified and implementation-ready
+but not yet coded** — needs a code-capable mode. T14 confirmed already-native (no core change). The
+wheel rebuild + rlgym routing are cross-repo and captured in T16.
 
 These are the C++/wheel-rebuild track. They run in parallel with the custombot (T9/T12/T15) and
 rlgym (T10/T11) Python tracks. The custombot master index lives at

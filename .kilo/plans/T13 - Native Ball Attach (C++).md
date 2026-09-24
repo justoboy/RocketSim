@@ -1,80 +1,148 @@
-# T13 — Native Ball-Attach (C++): Spike Rush weld + Gridiron roof-attach in RocketSim core
+# T13 — Native Ball-Attach (C++): Spike Rush + Gridiron in RocketSim core
 
-Status: NEW plan. **This is the C++/CLion track.** This file is designed to be MOVED into
-`D:\RLBotTraining\rocketsim\.kilo\plans\` and executed from the CLion IDE against the C++ repo.
-It is SELF-CONTAINED: all paths below are absolute; it does not depend on reading any custombot
-plan file.
+Status: **REWORK (v2).** The first pass (commit `8d45a72`) treated Spike Rush and Gridiron as one
+identical "sticky puck" mechanic. That was wrong: the two modes have **different** mechanics. This
+file is the corrected, implementation-ready spec for the C++ core. It is SELF-CONTAINED; all paths
+are absolute; it does not depend on reading any custombot plan file.
 
-## Why native (not the Python weld)
+## Scope split (who owns what)
 
-The custombot Python weld (`D:/RLBotTraining/custombot/custombot/spike_rush.py`) has concrete
-accuracy gaps vs. a native implementation:
-- attach offset is world-space `carrier.pos + (0,0,z)` — a flipped car doesn't keep the puck glued
-  to its roof; native must use `car.rotMat × local_offset` so the puck rotates with the car.
-- release velocity is `ball.vel = carrier.vel` (no rotational term); native must apply
-  `car.vel + ω × offset` (rigid-body point velocity) so a spinning car whips the puck correctly.
-- attach state lives in the engine instance, so it is LOST when the caller snapshots/restores a
-  mid-carry `GameState`; native stores it in `BallState` so it survives clone/serialize like
-  `hsInfo` already does.
+- **This plan (rocketsim core, Agent C):** the *simulation* of both modes — attach/engage/release,
+  steal/demo, fumble, boost lock, pad gating, kickoff/spawn, ball shape, serialization.
+- **Bindings repo (separate):** expose `GameMode.SPIKE_RUSH/GRIDIRON`, `CarControls.powerup`,
+  `BallState.attach_info` (incl. `last_carrier_id`), and the football shape; rebuild + install wheel.
+- **rlgym (separate):** route the two modes through the arena router; map the spike-rush release
+  action onto `CarControls.powerup`; compute 7/3/own-goal points and "first to 50" from
+  `attach_info.last_carrier_id`; feed carrier/attach state into obs. See T16 handoff.
 
-## Fork & backup (MANDATORY before any edit)
+## Decisions locked (from user Q&A)
 
-`D:/RLBotTraining/rocketsim` is a local clone of upstream `https://github.com/ZealanL/RocketSim`.
-Before editing:
-1. `git -C D:/RLBotTraining/rocketsim remote -v` → capture current `origin`.
-2. `git -C D:/RLBotTraining/rocketsim status` and `git -C D:/RLBotTraining/rocketsim log --oneline -5`
-   and `git -C D:/RLBotTraining/rocketsim diff --stat` → detect ANY existing local divergence.
-3. Report findings to the user; ask them to fork upstream and supply their fork URL.
-4. Then per repo: `git remote rename origin upstream`; `git remote add origin <USER_FORK_URL>`;
-   `git fetch upstream && git merge upstream/main`; initial
-   `git add -A && git commit -m "Backup: pre-T13 snapshot" && git push -u origin <branch>`.
-5. Only after the backup commit is pushed, make source changes. Never rewrite history; never push
-   to `upstream`.
+1. **Release input = new `bool powerup` on `CarControls`.** It is the rumble powerup button. In
+   Spike Rush its ONLY effect is to release an already-attached ball (you cannot pre-arm spikes).
+   In Gridiron there is NO release button — release happens via double-jump fumble or flip/dodge
+   throw. Name the field `powerup` (not `pickup`/`release`) because it is the shared rumble action.
+2. **Core keeps NO score / match-end logic.** It only fires the existing
+   `GoalScoreEventFn(this, scoringTeam, userInfo)` (see [`Arena.h`](src/Sim/Arena/Arena.h:24)),
+   exactly like heatseeker. rlgym owns 7/3 weighting and "first to 50".
+3. **rlgym reads a persistent "last carrier id"** to attribute points. So `AttachInfo` must keep a
+   `lastCarrierId` that SURVIVES release (so a released/loose ball still knows who last held it).
+4. **Boost lock + pad gating live in the core**, driven by the current carrier id, not in Python.
 
-## Build / wheel pipeline (this track DOES rebuild the wheel)
+## Data-model changes
 
-- Configure + build with CMake/CLion (Release, C++20): `D:/RLBotTraining/rocketsim/CMakeLists.txt`.
-- Regenerate + install the Python wheel into the custombot venv:
-  `D:/RLBotTraining/custombot/.venv/Scripts/python.exe -m pip install <rebuilt wheel>`.
-- Bump the serialization macro alongside any `BallState`/`MutatorConfig` field change, or
-  `Deserialize` hard-fails on field-count mismatch.
+### `src/Sim/CarControls.h`
+- Add `bool powerup;` to `struct CarControls` and to `CAR_CONTROLS_SERIALIZATION_FIELDS(name)`.
 
-## C++ changes
+### `src/Sim/Ball/Ball.h` — `BallState.AttachInfo`
+- Keep `attachedCarId` (0 = free ball). Add `uint32_t lastCarrierId` (persists after release; 0 if
+  never held). Keep `localOffset`, `engageTimer`, `releaseCooldown`.
+- Append `lastCarrierId` to `BALLSTATE_SERIALIZATION_FIELDS`.
 
-1. **`D:/RLBotTraining/rocketsim/src/Sim/GameMode.h`**: add `SPIKE_RUSH` (and `GRIDIRON`) to
-   `enum class GameMode` and matching strings to `GAMEMODE_STRS[]`.
-2. **`D:/RLBotTraining/rocketsim/src/Sim/Ball/Ball.h`**: add an `AttachInfo` struct to `BallState`
-   (`uint32_t attachedCarId = 0; Vec localOffset; float engageTimer; float releaseCooldown;`) and
-   add the new fields to `BALLSTATE_SERIALIZATION_FIELDS`.
-3. **`D:/RLBotTraining/rocketsim/src/Sim/Ball/Ball.cpp`**: in `_PreTickUpdate`, add a
-   `SPIKE_RUSH`/`GRIDIRON` branch mirroring the existing `HEATSEEKER` kinematic-override block:
-   while attached, set ball pos = `car.rotMat × localOffset + car.pos` and ball vel =
-   `car.vel + car.angVel × worldOffset`; auto-engage when a car is within attach radius of a free
-   ball; release on the carrier's jump (apply `car.vel + ω × offset`); steal-on-demo via the existing
-   car-bump path.
-4. **`D:/RLBotTraining/rocketsim/src/Sim/Arena/Arena.cpp`**: extend `Arena::Create` /
-   `ResetToRandomKickoff` spawn tables for the new modes (spike rush = soccar field; gridiron =
-   4v4 spawn table).
-5. **`D:/RLBotTraining/rocketsim/src/RocketSim.cpp`**: in `GetArenaCollisionShapes`, map
-   `SPIKE_RUSH`/`GRIDIRON` → soccar mesh (no unique mesh), same pattern as the existing
-   `SNOWDAY`/`HEATSEEKER → SOCCAR` fallthrough.
+### `src/RLConst.h`
+- `SpikeRush`: `ATTACH_RADIUS` (already ~150), `ACTIVATION_DELAY = 2.0f` (spikes activate 2s after
+  kickoff), `RELEASE_COOLDOWN = 2.0f` (no re-engage for 2s after release), `MIN_ATTACH_TIME` grace.
+- `Gridiron`: `ROOF_OFFSET` (fixed local offset above roof, e.g. `Vec(0,0,CAR_ROOF_Z)`),
+  `INVULN_TIME = 0.5f` (post-possession steal immunity), `REACQUIRE_COOLDOWN = 2.0f`,
+  `WALL_FUMBLE_Z` (height line above goal top), `LOBBED_*`/`SPIRAL_*` throw tuning constants,
+  `BALL_SHAPE = PROLATE` marker.
 
-## Python binding surface (regenerated wheel must expose)
+## Spike Rush mechanics (soccar field, 3v3)
 
-- `BallState.attach_info` fields (attached car id, local offset, timers) so the rlgym glue can
-  read/write them across the sim→obs boundary.
-- `GameMode.SPIKE_RUSH` / `GameMode.GRIDIRON` enum members.
+Implement in [`Ball::_PreTickUpdate`](src/Sim/Ball/Ball.cpp:161) + [`Arena`](src/Sim/Arena/Arena.cpp):
+
+1. **Arming delay:** attach mechanic is INACTIVE until `tickCount*tickTime >= SpikeRush::ACTIVATION_DELAY`
+   (2s after kickoff). Before that, the ball behaves as a normal soccar ball (normal `_OnHit`).
+2. **Engage on touch:** once active, when a non-demoed car's hitbox contacts the free ball, set
+   `attachedCarId = car.id`, `lastCarrierId = car.id`, and capture `localOffset` = the **contact
+   point** in the carrier's local frame (world→local via `rotMat` transpose). `engageTimer = 0`.
+3. **Carry (kinematic weld):** while attached, suppress normal hit impulse (existing `_OnHit`
+   early-return). Each tick set ball pos = `car.pos + car.rotMat*localOffset`, ball vel =
+   `car.vel + ω×worldOffset` (rigid-body point velocity). `engageTimer += tickTime`.
+4. **Boost lock (Spike Rush = NORMAL boost, not recharge):** Spike Rush keeps soccar-style boost
+   (`rechargeBoostEnabled = false`; pads active when free). While a car IS the carrier, force its
+   `boost = 0` and skip `BoostPad::_CheckCollide` for it (no pad pickup while attached). When free,
+   normal pad pickups apply. Gate in [`Arena::Step`](src/Sim/Arena/Arena.cpp:720) using
+   `ball->_internalState.attachInfo.attachedCarId`. (Gridiron differs: it uses dropshot-style recharge.)
+5. **Release (powerup):** when the carrier's `controls.powerup` is true and `engageTimer >=
+   MIN_ATTACH_TIME`, detach: keep current pos, set ball vel to the current point-velocity
+   (`car.vel + ω×offset`) so a flip-release whips the puck; `attachedCarId = 0`;
+   `releaseCooldown = RELEASE_COOLDOWN` (2s no re-engage). `lastCarrierId` stays set.
+6. **Steal = instant demo:** in [`_BtCallback_OnCarCarCollision`](src/Sim/Arena/Arena.cpp:323), in
+   Spike Rush, if one car is the carrier and another car contacts it, the **carrier is demoed
+   regardless of speed** (`carrier->Demolish(respawnDelay)`), and the ball re-attaches to the
+   toucher at the new contact point (`attachedCarId = toucher.id`, `lastCarrierId = toucher.id`).
+   (Team demos: allow steal-by-teammate too — Spike Rush steals are not team-gated.)
+7. **Scoring:** soccar goal plane (already wired). `IsBallScored`/`IsBallProbablyGoingIn` keep the
+   soccar branch. rlgym reads `lastCarrierId` at the goal tick to attribute the goal.
+
+## Gridiron mechanics (soccar mesh, 4v4, football)
+
+Same files; branch on `gameMode == GRIDIRON`:
+
+1. **Ball shape:** in [`MakeBallCollisionShape`](src/Sim/Ball/Ball.cpp:53), build a prolate-spheroid
+   (capsule) convex-hull for GRIDIRON instead of a sphere, so it tumbles like a football.
+2. **Roof-attach (not contact point):** on engage, `localOffset = Gridiron::ROOF_OFFSET` (fixed,
+   slightly above the roof), NOT the contact point.
+3. **No release button.** Release only via:
+   - **Double-jump fumble:** carrier `hasDoubleJumped` → free the ball (keeps current velocity).
+     Single jump is fine (no fumble).
+   - **Flip lob:** carrier `isFlipping`/`hasFlipped` with a forward/back flip → release with a
+     "lob": toss slightly up + along the flip's forward/back axis, spin about the axis perpendicular
+     to travel, plus the carrier's forward velocity.
+   - **Diagonal flip:** still throws straight forward, but the spin axis is set relative to the flip
+     direction (front/back tilt), not the car's raw forward.
+   - **Sideways dodge (spiral):** release with less up / more forward velocity, spinning about the
+     travel axis (right dodge → clockwise spin as it flies up at a shallow angle + forward force).
+   Use `car.flipRelTorque` + `car.rotMat` to derive the throw direction/spin.
+4. **Steal (no demo):** if ANY other player (teammate OR opponent) touches the carrier or the
+   attached ball, the ball transfers to them (`attachedCarId = toucher.id`, `lastCarrierId =
+   toucher.id`) at their roof — UNLESS the carrier is within `INVULN_TIME` (0.5s) of gaining
+   possession (brief invulnerability, no steal).
+5. **Fumble on opponent bump:** if the carrier is bumped by an **opponent** (not a teammate) — i.e.
+   a car-car contact that is NOT a steal-eligible clean touch — free the ball (fumble).
+6. **Wall-ride fumble:** if the carrier is driving on a wall with wheels in contact
+   (`isOnGround` via side wall, `worldContact` normal horizontal) AND its height is above the line
+   (~one car length above the goal top, `WALL_FUMBLE_Z`), fumble. Airborne (no wheel contact) does
+   NOT count.
+7. **Re-acquire cooldown:** after losing possession, that car cannot regain for `REACQUIRE_COOLDOWN`
+   (2s). Track per-car via a small timer (reuse `releaseCooldown` semantics keyed to carrier id, or
+   a per-car field).
+8. **Boost recharge when NOT in possession:** reuse dropshot recharge (`rechargeBoostEnabled = true`
+   in the Gridiron `MutatorConfig`). The carrier's boost is locked to 0 (same gate as Spike Rush).
+9. **Kickoff / possession handoff:** first kickoff → ball at field center (free). After a team
+   scores, the NEXT kickoff attaches the ball to one of the **opposing team's** cars (the team that
+   was scored on gets the ball). Implement in `ResetToRandomKickoff`: pick a car on the conceding
+   team, set `attachedCarId`/`lastCarrierId` to it with `localOffset = ROOF_OFFSET`.
+10. **Spawn:** 4v4. Add `CAR_SPAWN_LOCATIONS_GRIDIRON`/`CAR_RESPAWN_LOCATIONS_GRIDIRON` — cars lined
+    up evenly in front of the goal, ~1–2 car-lengths either side of the goal center. Wire into the
+    spawn-table selection in [`ResetToRandomKickoff`](src/Sim/Arena/Arena.cpp:137).
+11. **Scoring:** soccar goal plane; rlgym weights 7 (carried) / 3 (released) / 3 (own). Core just
+    fires the team-only goal callback.
+
+## Shared / cross-cutting
+
+- **`_OnHit` early-return** stays for both modes (weld suppresses normal impulse) — but Spike Rush
+  must NOT early-return before the 2s arming delay (pre-arm hits are normal soccar hits).
+- **Serialization:** `attachInfo` (incl. `lastCarrierId`) round-trips via `BALLSTATE_SERIALIZATION_FIELDS`.
+  `CarControls.powerup` round-trips via `CAR_CONTROLS_SERIALIZATION_FIELDS`. Bump `RS_VERSION`
+  ([`Framework.h`](src/Sim/Framework.h:3)) to `2.2.3` (both `BallState` and `CarControls` changed).
+- **Clone/Deserialize:** ensure `attachInfo` is carried through `Arena::Clone` (it copies via
+  `ball->SetState(GetState())`, so it flows automatically) and `DeserializeNew`.
 
 ## Verification (C++ side)
 
-- Unit probe (C++ or via the rebuilt wheel): attach a ball to a car, rotate the car upside-down,
-  assert the puck follows the roof (rotating offset), not a fixed world z.
-- Release while spinning: assert the puck inherits the `ω × offset` tangential velocity.
-- Serialize a mid-carry arena → deserialize → assert `attachedCarId` and offset survive.
-- Soccar/hoops/heatseeker/snowday behavior byte-identical to before the enum additions.
+- Spike Rush: before 2s, ball bounces normally; after 2s, touch attaches at contact point; flipping
+  the carrier keeps the puck glued to the roof (rotating offset); powerup releases keeping momentum;
+  a spinning carrier whips the puck on release; touching the carrier demos them and transfers the
+  ball; carrier boost stays 0 and pads don't refill it.
+- Gridiron: roof-attach (not contact point); single jump keeps ball, double jump fumbles; forward
+  flip lobs, right dodge spirals (clockwise); teammate/opponent touch steals (unless within 0.5s
+  invuln); opponent bump fumbles; wall-ride above the line fumbles; 2s re-acquire lockout; kickoff
+  after a goal attaches to the conceding team's car; football shape tumbles.
+- Serialize mid-carry → deserialize → `attachedCarId`/`lastCarrierId`/offset survive.
+- Soccar/hoops/heatseeker/snowday byte-identical to before.
 
-## Handoff back to custombot (Python, separate)
+## Out of scope (other tracks)
 
-Once the rebuilt wheel is installed, the custombot side (T11's engine routing + obs) reads
-`attach_info` from `BallState` instead of `SpikeRushEngine._attached_id`. That Python wiring lives
-in the custombot plans, not here.
+- rlgym router + obs + 7/3/own-goal scoring + first-to-50 (rlgym track; see T16).
+- Bindings exposure of `powerup`/`attach_info`/`last_carrier_id`/football shape (bindings track).

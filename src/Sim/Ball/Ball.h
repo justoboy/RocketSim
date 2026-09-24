@@ -50,6 +50,10 @@ struct BallState : public PhysState {
 		// Which car the ball is currently welded to (0 = free ball, not attached)
 		uint32_t attachedCarId = 0;
 
+		// Which car most recently carried the ball. Persists after a release so the rlgym layer can
+		// attribute scoring (carried-touch vs. released-touch) at the goal tick. 0 = never carried.
+		uint32_t lastCarrierId = 0;
+
 		// Offset of the ball relative to the carrier's center of mass, in the CARRIER's local space.
 		// World offset = carrier.rotMat * localOffset, so a flipped car keeps the puck glued to its roof.
 		Vec localOffset = {};
@@ -59,6 +63,10 @@ struct BallState : public PhysState {
 
 		// Cooldown (seconds) after a release during which the ball cannot re-attach to the same car.
 		float releaseCooldown = 0;
+
+		// True once the mode's attach mechanic is live. SPIKE_RUSH spikes only activate a fixed
+		//	delay after kickoff (before that, hits behave like normal soccar); GRIDIRON is always active.
+		bool active = false;
 	};
 	AttachInfo attachInfo;
 
@@ -76,7 +84,7 @@ struct BallState : public PhysState {
 pos, rotMat, vel, angVel, \
 hsInfo.yTargetDir, hsInfo.curTargetSpeed, hsInfo.timeSinceHit, \
 dsInfo.chargeLevel, dsInfo.accumulatedHitForce, dsInfo.yTargetDir, dsInfo.hasDamaged, dsInfo.lastDamageTick, \
-attachInfo.attachedCarId, attachInfo.localOffset, attachInfo.engageTimer, attachInfo.releaseCooldown \
+attachInfo.attachedCarId, attachInfo.lastCarrierId, attachInfo.localOffset, attachInfo.engageTimer, attachInfo.releaseCooldown, attachInfo.active \
 
 class Ball {
 public:
@@ -114,6 +122,12 @@ public:
 	float GetMass() const;
 
 	void _PreTickUpdate(GameMode gameMode, float tickTime, const std::unordered_set<class Car*>& cars);
+	// Collision-based engage/steal for ball-attach modes. Called when a car's hitbox contacts the
+	//	ball. 'toucher' is the car that hit the ball; 'carrier' is the current carrier (null if free).
+	//	Handles first engage (free -> attached) and steal (attached -> toucher), respecting the
+	//	carrier's post-possession invulnerability window. In SPIKE_RUSH a steal also demos the carrier.
+	//	Returns true if the ball is now welded (caller should suppress the normal hit impulse).
+	bool _OnAttach(class Car* toucher, class Car* carrier, Vec worldBallPos, GameMode gameMode);
 	void _OnHit(
 		class Car* car, Vec relPos,
 		float& outFriction, float& outRestitution,

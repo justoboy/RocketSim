@@ -31,6 +31,12 @@ public:
 
 	GameMode gameMode;
 
+	// Ball-attach modes (GRIDIRON): which team last scored, so the next kickoff can hand the ball to
+	//	the conceding team (the team that was scored on). _hasScoredOnce is false until the first goal,
+	//	so the opening kickoff leaves the ball free at center.
+	Team _lastGoalTeam = Team::BLUE;
+	bool _hasScoredOnce = false;
+
 	uint32_t _lastCarID = 0;
 	std::unordered_set<Car*> _cars;
 	bool ownsCars = true; // If true, deleting this arena instance deletes all cars

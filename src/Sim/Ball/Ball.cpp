@@ -52,7 +52,34 @@ void Ball::SetState(const BallState& state) {
 
 btCollisionShape* MakeBallCollisionShape(GameMode gameMode, const MutatorConfig& mutatorConfig, btVector3& localIntertia) {
 	
-	if (gameMode == GameMode::SNOWDAY) {
+	if (gameMode == GameMode::GRIDIRON) {
+		using namespace RLConst;
+
+		// Prolate-spheroid ("football") convex hull: tessellate rings of points along the local X axis.
+		auto shape = new btConvexHullShape();
+
+		int rings = (int)Gridiron::FOOTBALL_HULL_RINGS;
+		int ringPts = (int)Gridiron::FOOTBALL_HULL_RING_POINTS;
+		float semiMajor = Gridiron::FOOTBALL_SEMI_MAJOR * UU_TO_BT;
+		float semiMinor = Gridiron::FOOTBALL_SEMI_MINOR * UU_TO_BT;
+
+		for (int i = 0; i <= rings; i++) {
+			// Parametrize the major axis from -semiMajor..+semiMajor
+			float tx = (float)i / (float)rings; // 0..1
+			float x = (tx * 2.f - 1.f) * semiMajor;
+			// Cross-section radius at this x: ellipse cross-section
+			float cross = 1.f - (x / semiMajor) * (x / semiMajor);
+			float r = semiMinor * sqrtf(RS_MAX(0.f, cross));
+			for (int j = 0; j < ringPts; j++) {
+				float ang = (M_PI * 2.f) * ((float)j / (float)ringPts);
+				Vec point = Vec(x, cosf(ang) * r, sinf(ang) * r);
+				shape->addPoint(point, false);
+			}
+		}
+		shape->recalcLocalAabb();
+		shape->calculateLocalInertia(mutatorConfig.ballMass, localIntertia);
+		return shape;
+	} else if (gameMode == GameMode::SNOWDAY) {
 		using namespace RLConst;
 
 		auto shape = new btConvexHullShape();
@@ -236,7 +263,18 @@ void Ball::_PreTickUpdate(GameMode gameMode, float tickTime, const std::unordere
 
 		auto& info = _internalState.attachInfo;
 
-		// Tick down the re-attach cooldown
+		// Activation: GRIDIRON is always live; SPIKE_RUSH spikes arm a fixed delay after kickoff.
+		// Before activation the ball behaves as a normal soccar ball (handled by _OnHit).
+		if (!info.active) {
+			if (gameMode == GameMode::GRIDIRON)
+				info.active = true;
+			else if (_internalState.tickCountSinceUpdate * tickTime >= SpikeRush::ACTIVATION_DELAY)
+				info.active = true;
+		}
+		if (!info.active)
+			return;
+
+		// Tick down the per-car re-acquire lockout
 		if (info.releaseCooldown > 0)
 			info.releaseCooldown = RS_MAX(0.f, info.releaseCooldown - tickTime);
 
@@ -247,9 +285,10 @@ void Ball::_PreTickUpdate(GameMode gameMode, float tickTime, const std::unordere
 				if (car->id == info.attachedCarId) { carrier = car; break; }
 
 			if (carrier == nullptr || carrier->_internalState.isDemoed) {
-				// Carrier gone or demolished: release, ball keeps its current velocity
+				// Carrier demolished (Spike Rush steal) or gone: free the ball. The toucher (a
+				//	different car, not lastCarrierId) can grab it immediately via proximity engage.
 				info.attachedCarId = 0;
-				info.releaseCooldown = SpikeRush::RELEASE_COOLDOWN;
+				info.releaseCooldown = (gameMode == GameMode::GRIDIRON) ? Gridiron::REACQUIRE_COOLDOWN : SpikeRush::RELEASE_COOLDOWN;
 			} else {
 				auto carState = carrier->GetState();
 				info.engageTimer += tickTime;
@@ -258,7 +297,7 @@ void Ball::_PreTickUpdate(GameMode gameMode, float tickTime, const std::unordere
 				btMatrix3x3 carBasis = carState.rotMat;
 				Vec worldOffset = (carBasis * (btVector3)info.localOffset) * BT_TO_UU;
 
-				// Kinematic override: puck follows the carrier's roof
+				// Kinematic override: puck follows the carrier
 				btTransform newTransform;
 				newTransform.setOrigin((carState.pos + worldOffset) * UU_TO_BT);
 				newTransform.setBasis(carState.rotMat);
@@ -269,39 +308,113 @@ void Ball::_PreTickUpdate(GameMode gameMode, float tickTime, const std::unordere
 				_rigidBody.setLinearVelocity(pointVel * UU_TO_BT);
 				_rigidBody.setActivationState(ACTIVE_TAG);
 
-				// Release on the carrier's jump (after a short grace period)
-				if (carrier->_internalState.isJumping && info.engageTimer >= SpikeRush::MIN_ATTACH_TIME) {
-					// Inherit ω × offset tangential velocity so a spinning car whips the puck
-					_rigidBody.setLinearVelocity(pointVel * UU_TO_BT);
-					info.attachedCarId = 0;
-					info.releaseCooldown = SpikeRush::RELEASE_COOLDOWN;
-				}
-			}
-		} else {
-			// Free ball: auto-engage when a non-demoed car is within attach radius
-			if (info.releaseCooldown <= 0) {
-				Vec ballPos = _rigidBody.getWorldTransform().getOrigin() * BT_TO_UU;
-				Car* best = nullptr;
-				float bestDistSq = SpikeRush::ATTACH_RADIUS * SpikeRush::ATTACH_RADIUS;
-				for (Car* car : cars) {
-					if (car->_internalState.isDemoed)
-						continue;
-					float d = ballPos.DistSq(car->GetState().pos);
-					if (d < bestDistSq) {
-						bestDistSq = d;
-						best = car;
+				bool release = false;
+				bool throwBall = false;
+				Vec throwVel = pointVel;
+				Vec throwSpin = {};
+
+				if (gameMode == GameMode::SPIKE_RUSH) {
+					// Release on the rumble powerup button (after a short grace period). The puck
+					//	inherits the current point-velocity, so a spinning carrier whips it.
+					if (carrier->controls.powerup && info.engageTimer >= SpikeRush::MIN_ATTACH_TIME)
+						release = true;
+				} else { // GRIDIRON
+					if (carState.hasDoubleJumped) {
+						// Double-jump fumble: free the ball, keep current velocity.
+						release = true;
+					} else if (carState.isFlipping || carState.hasFlipped) {
+						// Flip lob (forward/back) vs dodge spiral (sideways), derived from flipRelTorque.
+						float fwdFlip = carState.flipRelTorque.y; // + forward flip, - back flip
+						float sideFlip = carState.flipRelTorque.x; // + right dodge, - left dodge
+						Vec carFwd = carState.rotMat.forward;
+						Vec carRight = carState.rotMat.right;
+						if (fabsf(fwdFlip) >= fabsf(sideFlip)) {
+							// Flip lob: toss up + along the flip's forward/back axis, spin about the right axis.
+							float dir = RS_SGN(fwdFlip);
+							throwVel = carState.vel + (carFwd * (Gridiron::THROW_FLIP_LOB_FWD * dir)) + Vec(0, 0, Gridiron::THROW_FLIP_LOB_UP);
+							throwSpin = carRight * (Gridiron::THROW_FLIP_LOB_SPIN * dir);
+						} else {
+							// Dodge spiral: less up / more forward, spin about the travel (forward) axis.
+							float dir = RS_SGN(sideFlip);
+							throwVel = carState.vel + (carFwd * Gridiron::THROW_DODGE_FWD) + Vec(0, 0, Gridiron::THROW_DODGE_UP);
+							throwSpin = carFwd * (Gridiron::THROW_DODGE_SPIN * dir);
+						}
+						release = true;
+						throwBall = true;
+					} else if (carState.worldContact.hasContact && carState.pos.z > Gridiron::WALL_FUMBLE_Z) {
+						// Wall-ride fumble: wheels on a wall above the line.
+						release = true;
 					}
 				}
-				if (best != nullptr) {
-					auto carState = best->GetState();
-					info.attachedCarId = best->id;
-					// Store offset in the carrier's local space (world -> local via transpose product)
-					info.localOffset = carState.rotMat.Dot(ballPos - carState.pos);
-					info.engageTimer = 0;
+
+				if (release) {
+					if (throwBall) {
+						_rigidBody.setLinearVelocity(throwVel * UU_TO_BT);
+						_rigidBody.setAngularVelocity(throwSpin);
+					} else {
+						_rigidBody.setLinearVelocity(pointVel * UU_TO_BT);
+					}
+					info.attachedCarId = 0;
+					info.releaseCooldown = (gameMode == GameMode::GRIDIRON) ? Gridiron::REACQUIRE_COOLDOWN : SpikeRush::RELEASE_COOLDOWN;
 				}
 			}
 		}
+	// NOTE: When the ball is free (attachedCarId == 0), engagement happens via collision:
+	//	Arena::_BtCallback_OnCarBallCollision -> Ball::_OnAttach (see Arena.cpp). No proximity logic here.
 	}
+}
+
+bool Ball::_OnAttach(Car* toucher, Car* carrier, Vec worldBallPos, GameMode gameMode) {
+	using namespace RLConst;
+	auto& info = _internalState.attachInfo;
+
+	// Not yet active (e.g. Spike Rush pre-arm): behave as a normal soccar ball, no weld.
+	if (!info.active)
+		return false;
+
+	if (carrier == nullptr) {
+		// Free ball: engage, unless we're inside the previous carrier's re-acquire lockout.
+		if (info.releaseCooldown > 0 && toucher->id == info.lastCarrierId)
+			return false; // Locked out: let the normal hit impulse apply for the old carrier.
+		// Engage: weld to the toucher.
+		info.attachedCarId = toucher->id;
+		info.lastCarrierId = toucher->id;
+		if (gameMode == GameMode::GRIDIRON) {
+			info.localOffset = Gridiron::ROOF_LOCAL_OFFSET;
+		} else {
+			// SPIKE_RUSH: weld at the contact point (ball pos relative to car, in car-local space).
+			auto ts = toucher->GetState();
+			info.localOffset = ts.rotMat.Dot(worldBallPos - ts.pos);
+		}
+		info.engageTimer = 0;
+		info.releaseCooldown = 0;
+		return true;
+	}
+
+	// Ball already welded to 'carrier'.
+	if (toucher->id == carrier->id)
+		return true; // Carrier touched its own ball: keep weld, suppress impulse.
+
+	// A different car touched the ball: steal, unless the carrier is still in its post-possession
+	//	invulnerability window.
+	if (info.engageTimer < ATTACH_INVULN_TIME)
+		return true; // Carrier invulnerable: keep weld, suppress impulse.
+
+	// Steal: transfer possession to the toucher.
+	if (gameMode == GameMode::SPIKE_RUSH && toucher->team != carrier->team)
+		carrier->Demolish(); // Opponent steal demos the carrier (teammate steal: no demo).
+
+	info.attachedCarId = toucher->id;
+	info.lastCarrierId = toucher->id;
+	if (gameMode == GameMode::GRIDIRON) {
+		info.localOffset = Gridiron::ROOF_LOCAL_OFFSET;
+	} else {
+		auto ts = toucher->GetState();
+		info.localOffset = ts.rotMat.Dot(worldBallPos - ts.pos);
+	}
+	info.engageTimer = 0;
+	info.releaseCooldown = 0;
+	return true;
 }
 
 void Ball::_OnHit(
@@ -311,9 +424,10 @@ void Ball::_OnHit(
 ) {
 	using namespace RLConst;
 
-	// In ball-attach modes the puck is kinematically welded to its carrier; a normal
-	//	car-ball hit impulse would fight the weld, so skip the extra impulse entirely.
-	if (gameMode == GameMode::SPIKE_RUSH || gameMode == GameMode::GRIDIRON)
+	// Once a ball-attach mode's mechanic is live, the puck is kinematically welded to its carrier;
+	//	a normal car-ball hit impulse would fight the weld, so skip the extra impulse entirely.
+	//	SPIKE_RUSH behaves like normal soccar until its spikes arm (attachInfo.active becomes true).
+	if ((gameMode == GameMode::SPIKE_RUSH || gameMode == GameMode::GRIDIRON) && _internalState.attachInfo.active)
 		return;
 
 	auto carState = car->GetState();

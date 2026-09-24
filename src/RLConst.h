@@ -143,7 +143,11 @@ namespace RLConst {
 
 		BUMP_COOLDOWN_TIME = 0.25f,
 		BUMP_MIN_FORWARD_DIST = 64.5f,
-		DEMO_RESPAWN_TIME = 3.f;
+		DEMO_RESPAWN_TIME = 3.f,
+
+		// Time (seconds) after gaining possession during which the carrier cannot be demoed or
+		//	have the ball stolen (used by SPIKE_RUSH and GRIDIRON).
+		ATTACH_INVULN_TIME = 0.5f;
 
 	// NOTE: Angle order is PYR
 	constexpr Vec
@@ -200,19 +204,54 @@ namespace RLConst {
 	}
 
 	namespace SpikeRush {
-		// Local (car-space) offset of the attached puck relative to the carrier's center of mass.
-		// The puck sits slightly above the roof so it visually "rides" the car.
-		constexpr Vec ATTACH_LOCAL_OFFSET = Vec(0.f, 0.f, 100.f);
+		// Spikes are inactive for this long after kickoff (seconds). While inactive, the puck
+		//	bounces normally; after this delay, touching the puck welds it to the toucher.
+		constexpr float ACTIVATION_DELAY = 2.f;
 
 		// A free puck within this world-space distance of a car's center auto-engages (welds).
+		// On engage, the weld offset is the *contact point* (ball pos - car pos), not a fixed offset.
 		constexpr float ATTACH_RADIUS = 150.f;
 
-		// Minimum time the puck must be attached before a jump-release is honored,
+		// Minimum time the puck must be attached before a release is honored,
 		//	prevents a single-tick engage/release flicker on the engaging hit.
 		constexpr float MIN_ATTACH_TIME = 0.05f;
 
-		// Cooldown (seconds) after a release during which the puck cannot re-attach to a car.
-		constexpr float RELEASE_COOLDOWN = 0.1f;
+		// Cooldown (seconds) after a release during which the puck cannot re-attach to any car.
+		constexpr float RELEASE_COOLDOWN = 2.f;
+	}
+
+	namespace Gridiron {
+		// Fixed local (car-space) offset of the ball relative to the carrier's center of mass.
+		// The ball is welded to the carrier's ROOF (not the contact point) so it stays glued
+		//	through flips and wall-rides.
+		constexpr Vec ROOF_LOCAL_OFFSET = Vec(0.f, 0.f, 110.f);
+
+		// A free ball within this world-space distance of a car's center auto-engages (welds).
+		constexpr float ATTACH_RADIUS = 150.f;
+
+		// Cooldown (seconds) after a fumble during which the ball cannot re-attach to any car.
+		constexpr float REACQUIRE_COOLDOWN = 2.f;
+
+		// Invulnerability (seconds) granted to a car that just stole the ball via touch.
+		constexpr float STEAL_INVULN_TIME = 0.5f;
+
+		// If a carrier's wheels are on a wall and its Z is above this, the ball fumbles (wall-ride fumble).
+		constexpr float WALL_FUMBLE_Z = 1024.f;
+
+		// Prolate-spheroid ("football") collision shape: semi-axes in UU and hull tessellation.
+		constexpr float
+			FOOTBALL_SEMI_MAJOR = 64.5f, // half-length along local X
+			FOOTBALL_SEMI_MINOR = 45.5f, // cross-section radius (local Y/Z)
+			FOOTBALL_HULL_RINGS = 12,
+			FOOTBALL_HULL_RING_POINTS = 12;
+
+		// Release throws (impulse applied to the ball at release, in UU/s):
+		// Double-jump "fumble": ball pops straight up with a little of the carrier's speed.
+		constexpr float THROW_FUMBLE_UP = 500.f;
+		// Flip lob (forward/back flip): tosses up + along the carrier's flip axis with spin.
+		constexpr float THROW_FLIP_LOB_FWD = 900.f, THROW_FLIP_LOB_UP = 700.f, THROW_FLIP_LOB_SPIN = 8.f;
+		// Dodge spiral (sideways dodge): less up, more forward, with clockwise/counter-clockwise spin.
+		constexpr float THROW_DODGE_FWD = 1100.f, THROW_DODGE_UP = 350.f, THROW_DODGE_SPIN = 12.f;
 	}
 
 	namespace Dropshot {
@@ -359,6 +398,7 @@ namespace RLConst {
 	constexpr int
 		CAR_SPAWN_LOCATION_AMOUNT = 5,
 		CAR_SPAWN_LOCATION_AMOUNT_HEATSEEKER = 4,
+		CAR_SPAWN_LOCATION_AMOUNT_GRIDIRON = 4,
 		CAR_RESPAWN_LOCATION_AMOUNT = 4;
 
 	struct CarSpawnPos {
@@ -427,6 +467,24 @@ namespace RLConst {
 		{ -1152, -3100, M_PI / 2 },
 		{  2176, -3410, M_PI / 2 },
 		{  1152, -3100, M_PI / 2 }
+	};
+
+	// GRIDIRON is a 4v4 "football" mode: 4 cars line up in a row in front of their own goal.
+	// For blue team (negative Y), flip for orange.
+	const static CarSpawnPos
+		CAR_SPAWN_LOCATIONS_GRIDIRON[4] = {
+		{ -2560, -4352, M_PI_4 * 2 },
+		{  -854, -4352, M_PI_4 * 2 },
+		{   854, -4352, M_PI_4 * 2 },
+		{  2560, -4352, M_PI_4 * 2 }
+	};
+
+	const static CarSpawnPos
+		CAR_RESPAWN_LOCATIONS_GRIDIRON[4] = {
+		{ -2560, -4352, M_PI / 2 },
+		{  -854, -4352, M_PI / 2 },
+		{   854, -4352, M_PI / 2 },
+		{  2560, -4352, M_PI / 2 }
 	};
 
 	// Input: Forward car speed
