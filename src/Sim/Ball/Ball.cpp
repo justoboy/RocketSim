@@ -158,7 +158,7 @@ float Ball::GetMass() const {
 	return _rigidBody.getMass();
 }
 
-void Ball::_PreTickUpdate(GameMode gameMode, float tickTime) {
+void Ball::_PreTickUpdate(GameMode gameMode, float tickTime, const std::unordered_set<class Car*>& cars) {
 	if (gameMode == GameMode::HEATSEEKER) {
 		using namespace RLConst;
 
@@ -231,6 +231,76 @@ void Ball::_PreTickUpdate(GameMode gameMode, float tickTime) {
 			}
 		}
 
+	} else if (gameMode == GameMode::SPIKE_RUSH || gameMode == GameMode::GRIDIRON) {
+		using namespace RLConst;
+
+		auto& info = _internalState.attachInfo;
+
+		// Tick down the re-attach cooldown
+		if (info.releaseCooldown > 0)
+			info.releaseCooldown = RS_MAX(0.f, info.releaseCooldown - tickTime);
+
+		if (info.attachedCarId != 0) {
+			// Currently welded to a car: find the carrier
+			Car* carrier = nullptr;
+			for (Car* car : cars)
+				if (car->id == info.attachedCarId) { carrier = car; break; }
+
+			if (carrier == nullptr || carrier->_internalState.isDemoed) {
+				// Carrier gone or demolished: release, ball keeps its current velocity
+				info.attachedCarId = 0;
+				info.releaseCooldown = SpikeRush::RELEASE_COOLDOWN;
+			} else {
+				auto carState = carrier->GetState();
+				info.engageTimer += tickTime;
+
+				// World-space offset = carrier.rotMat * localOffset (rotates with the car, even flipped)
+				btMatrix3x3 carBasis = carState.rotMat;
+				Vec worldOffset = (carBasis * (btVector3)info.localOffset) * BT_TO_UU;
+
+				// Kinematic override: puck follows the carrier's roof
+				btTransform newTransform;
+				newTransform.setOrigin((carState.pos + worldOffset) * UU_TO_BT);
+				newTransform.setBasis(carState.rotMat);
+				_rigidBody.setWorldTransform(newTransform);
+
+				// Rigid-body point velocity: v = car.vel + ω × offset
+				Vec pointVel = carState.vel + carState.angVel.Cross(worldOffset);
+				_rigidBody.setLinearVelocity(pointVel * UU_TO_BT);
+				_rigidBody.setActivationState(ACTIVE_TAG);
+
+				// Release on the carrier's jump (after a short grace period)
+				if (carrier->_internalState.isJumping && info.engageTimer >= SpikeRush::MIN_ATTACH_TIME) {
+					// Inherit ω × offset tangential velocity so a spinning car whips the puck
+					_rigidBody.setLinearVelocity(pointVel * UU_TO_BT);
+					info.attachedCarId = 0;
+					info.releaseCooldown = SpikeRush::RELEASE_COOLDOWN;
+				}
+			}
+		} else {
+			// Free ball: auto-engage when a non-demoed car is within attach radius
+			if (info.releaseCooldown <= 0) {
+				Vec ballPos = _rigidBody.getWorldTransform().getOrigin() * BT_TO_UU;
+				Car* best = nullptr;
+				float bestDistSq = SpikeRush::ATTACH_RADIUS * SpikeRush::ATTACH_RADIUS;
+				for (Car* car : cars) {
+					if (car->_internalState.isDemoed)
+						continue;
+					float d = ballPos.DistSq(car->GetState().pos);
+					if (d < bestDistSq) {
+						bestDistSq = d;
+						best = car;
+					}
+				}
+				if (best != nullptr) {
+					auto carState = best->GetState();
+					info.attachedCarId = best->id;
+					// Store offset in the carrier's local space (world -> local via transpose product)
+					info.localOffset = carState.rotMat.Dot(ballPos - carState.pos);
+					info.engageTimer = 0;
+				}
+			}
+		}
 	}
 }
 
@@ -240,6 +310,11 @@ void Ball::_OnHit(
 	GameMode gameMode, const MutatorConfig& mutatorConfig, uint64_t tickCount
 ) {
 	using namespace RLConst;
+
+	// In ball-attach modes the puck is kinematically welded to its carrier; a normal
+	//	car-ball hit impulse would fight the weld, so skip the extra impulse entirely.
+	if (gameMode == GameMode::SPIKE_RUSH || gameMode == GameMode::GRIDIRON)
+		return;
 
 	auto carState = car->GetState();
 	auto ballState = GetState();

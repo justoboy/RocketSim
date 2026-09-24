@@ -712,7 +712,7 @@ void Arena::Step(int ticksToSimulate) {
 		}
 
 		// Update ball
-		ball->_PreTickUpdate(gameMode, tickTime);
+		ball->_PreTickUpdate(gameMode, tickTime, _cars);
 
 		// Update world
 		_bulletWorld.stepSimulation(tickTime, 0, tickTime);
@@ -772,7 +772,8 @@ bool Arena::IsBallProbablyGoingIn(float maxTime, float extraMargin, Team* goalTe
 	Vec ballPos = ball->_rigidBody.getWorldTransform().m_origin * BT_TO_UU;
 	Vec ballVel = ball->_rigidBody.m_linearVelocity * BT_TO_UU;
 
-	if (gameMode == GameMode::SOCCAR || gameMode == GameMode::SNOWDAY) {
+	if (gameMode == GameMode::SOCCAR || gameMode == GameMode::SNOWDAY ||
+		gameMode == GameMode::SPIKE_RUSH || gameMode == GameMode::GRIDIRON) {
 		if (abs(ballVel.y) < FLT_EPSILON)
 			return false;
 
@@ -895,6 +896,8 @@ bool Arena::IsBallScored() const {
 	case GameMode::SOCCAR:
 	case GameMode::HEATSEEKER:
 	case GameMode::SNOWDAY:
+	case GameMode::SPIKE_RUSH:
+	case GameMode::GRIDIRON:
 	{
 		float ballPosY = ball->_rigidBody.getWorldTransform().m_origin.y() * BT_TO_UU;
 		return abs(ballPosY) > (_mutatorConfig.goalBaseThresholdY + _mutatorConfig.ballRadius);
