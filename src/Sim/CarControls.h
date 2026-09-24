@@ -14,8 +14,9 @@ struct CarControls {
 	// Boolean action inputs
 	bool jump, boost, handbrake;
 
-	// Maybe someday...
-	// bool useItem;
+	// Rumble "powerup" button. In SPIKE_RUSH this releases an already-attached ball
+	//	(no-op when nothing is attached; you cannot pre-arm the spikes). Unused in GRIDIRON.
+	bool powerup;
 
 	CarControls() {
 		// Initialize everything as zero
@@ -35,6 +36,6 @@ struct CarControls {
 #define CAR_CONTROLS_SERIALIZATION_FIELDS(name) \
 name.throttle, name.steer, \
 name.pitch, name.yaw, name.roll, \
-name.boost, name.jump, name.handbrake
+name.boost, name.jump, name.handbrake, name.powerup
 
 RS_NS_END

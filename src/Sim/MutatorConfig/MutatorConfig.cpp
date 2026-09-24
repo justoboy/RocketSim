@@ -37,7 +37,12 @@ MutatorConfig::MutatorConfig(GameMode gameMode) {
 		// Spawn with 100, and recharge
 		carSpawnBoostAmount = 100;
 		rechargeBoostEnabled = true;
+	} else if (gameMode == GameMode::GRIDIRON) {
+		// Gridiron uses dropshot-style recharge when NOT carrying the ball
+		carSpawnBoostAmount = 100;
+		rechargeBoostEnabled = true;
 	}
+	// SPIKE_RUSH keeps normal soccar boost (no recharge; pads active when free).
 }
 
 void MutatorConfig::Serialize(DataStreamOut& out) const {

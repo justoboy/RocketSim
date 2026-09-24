@@ -131,6 +131,8 @@ void Arena::ResetToRandomKickoff(int seed) {
 	}
 
 	int locationAmount = (gameMode == GameMode::HEATSEEKER) ? CAR_SPAWN_LOCATION_AMOUNT_HEATSEEKER : CAR_SPAWN_LOCATION_AMOUNT;
+	if (gameMode == GameMode::GRIDIRON)
+		locationAmount = CAR_SPAWN_LOCATION_AMOUNT_GRIDIRON;
 
 	std::shuffle(kickoffOrder.begin(), kickoffOrder.begin() + locationAmount, *randEngine);
 
@@ -145,6 +147,9 @@ void Arena::ResetToRandomKickoff(int seed) {
 	} else if (gameMode == GameMode::DROPSHOT) {
 		CAR_SPAWN_LOCATIONS = CAR_SPAWN_LOCATIONS_DROPSHOT;
 		CAR_RESPAWN_LOCATIONS = CAR_RESPAWN_LOCATIONS_DROPSHOT;
+	} else if (gameMode == GameMode::GRIDIRON) {
+		CAR_SPAWN_LOCATIONS = CAR_SPAWN_LOCATIONS_GRIDIRON;
+		CAR_RESPAWN_LOCATIONS = CAR_RESPAWN_LOCATIONS_GRIDIRON;
 	}
 
 	std::vector<Car*> blueCars, orangeCars;
@@ -207,6 +212,24 @@ void Arena::ResetToRandomKickoff(int seed) {
 		ballState.vel.z = FLT_EPSILON;
 	}
 	ball->SetState(ballState);
+
+	// GRIDIRON kickoff-after-goal handoff: after the first goal, the next kickoff attaches the ball
+	//	to a car on the conceding team (the team that was scored on). The opening kickoff leaves it free.
+	if (gameMode == GameMode::GRIDIRON && _hasScoredOnce) {
+		Team concedingTeam = (_lastGoalTeam == Team::BLUE) ? Team::ORANGE : Team::BLUE;
+		Car* newCarrier = nullptr;
+		for (Car* car : _cars)
+			if (car->team == concedingTeam) { newCarrier = car; break; }
+		if (newCarrier) {
+			auto& info = ball->_internalState.attachInfo;
+			info.active = true;
+			info.attachedCarId = newCarrier->id;
+			info.lastCarrierId = newCarrier->id;
+			info.localOffset = RLConst::Gridiron::ROOF_LOCAL_OFFSET;
+			info.engageTimer = 0;
+			info.releaseCooldown = 0;
+		}
+	}
 
 	// Reset boost pads
 	for (BoostPad* boostPad : _boostPads)
@@ -317,11 +340,54 @@ void Arena::_BtCallback_OnCarBallCollision(Car* car, Ball* ball, btManifoldPoint
 	using namespace RLConst;
 
 	Vec relBallPos = (ballIsBodyA ? manifoldPoint.m_localPointA : manifoldPoint.m_localPointB) * BT_TO_UU;
+
+	// Ball-attach modes: possession changes via collision (engage/steal), not via a hit impulse.
+	//	Resolve the current carrier (if any) and let the ball decide whether to weld to the toucher.
+	if (gameMode == GameMode::SPIKE_RUSH || gameMode == GameMode::GRIDIRON) {
+		auto& info = ball->_internalState.attachInfo;
+		Car* carrier = (info.attachedCarId != 0) ? GetCar(info.attachedCarId) : nullptr;
+		Vec worldBallPos = ball->GetState().pos;
+		if (ball->_OnAttach(car, carrier, worldBallPos, gameMode))
+			return; // Welded (or carrier invulnerable): suppress the normal hit impulse.
+	}
+
 	ball->_OnHit(car, relBallPos, manifoldPoint.m_combinedFriction, manifoldPoint.m_combinedRestitution, gameMode, _mutatorConfig, tickCount);
 }
 
 void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint& manifoldPoint) {
 	using namespace RLConst;
+
+	// Ball-attach modes: when the carrier is bumped, an opponent contact steals (SPIKE_RUSH: demo +
+	//	transfer) or fumbles (GRIDIRON: free the ball). A teammate contact does nothing special.
+	if (gameMode == GameMode::SPIKE_RUSH || gameMode == GameMode::GRIDIRON) {
+		auto& info = ball->_internalState.attachInfo;
+		if (info.active && info.attachedCarId != 0 && info.engageTimer >= ATTACH_INVULN_TIME) {
+			Car* carrier = nullptr; Car* toucher = nullptr;
+			if (car1->id == info.attachedCarId) { carrier = car1; toucher = car2; }
+			else if (car2->id == info.attachedCarId) { carrier = car2; toucher = car1; }
+			if (carrier && toucher && toucher->team != carrier->team) {
+				if (gameMode == GameMode::SPIKE_RUSH) {
+					// Steal: demo the carrier and transfer possession to the toucher.
+					carrier->Demolish(_mutatorConfig.respawnDelay);
+					auto ts = toucher->GetState();
+					info.attachedCarId = toucher->id;
+					info.lastCarrierId = toucher->id;
+					info.localOffset = ts.rotMat.Dot(ball->GetState().pos - ts.pos);
+					info.engageTimer = 0;
+					info.releaseCooldown = 0;
+				} else { // GRIDIRON: fumble, free the ball (keep current velocity).
+					auto bs = ball->GetState();
+					ball->_rigidBody.setLinearVelocity(bs.vel * UU_TO_BT);
+					ball->_rigidBody.setActivationState(ACTIVE_TAG);
+					info.attachedCarId = 0;
+					info.releaseCooldown = Gridiron::REACQUIRE_COOLDOWN;
+				}
+				return;
+			}
+			if (carrier)
+				return; // Carrier bumped by a teammate: no steal, no bump impulse.
+		}
+	}
 
 	// Manually override manifold friction/restitution
 	manifoldPoint.m_combinedFriction = RLConst::CARCAR_COLLISION_FRICTION;
@@ -714,6 +780,14 @@ void Arena::Step(int ticksToSimulate) {
 		// Update ball
 		ball->_PreTickUpdate(gameMode, tickTime, _cars);
 
+		// Ball-attach modes: the carrier's boost is locked to 0 while it carries the puck.
+		if ((gameMode == GameMode::SPIKE_RUSH || gameMode == GameMode::GRIDIRON) && ball->_internalState.attachInfo.active) {
+			uint32_t carrierId = ball->_internalState.attachInfo.attachedCarId;
+			if (carrierId != 0)
+				if (Car* carrier = GetCar(carrierId))
+					carrier->_internalState.boost = 0;
+		}
+
 		// Update world
 		_bulletWorld.stepSimulation(tickTime, 0, tickTime);
 
@@ -745,10 +819,13 @@ void Arena::Step(int ticksToSimulate) {
 			if (ball->_internalState.dsInfo.lastDamageTick && ball->_internalState.dsInfo.lastDamageTick == tickCount)
 				SetDropshotTilesState(_dropshotTilesState);
 
-		if (_goalScoreCallback.func != NULL) { // Potentially fire goal score callback
-			if (IsBallScored()) {
-				_goalScoreCallback.func(this, RS_TEAM_FROM_Y(-ball->_rigidBody.getWorldTransform().m_origin.y()), _goalScoreCallback.userInfo);
-			}
+		if (IsBallScored()) { // Potentially fire goal score callback
+			Team scoringTeam = RS_TEAM_FROM_Y(-ball->_rigidBody.getWorldTransform().m_origin.y());
+			// Record the scoring team so the next GRIDIRON kickoff can hand the ball to the conceding team.
+			_lastGoalTeam = scoringTeam;
+			_hasScoredOnce = true;
+			if (_goalScoreCallback.func != NULL)
+				_goalScoreCallback.func(this, scoringTeam, _goalScoreCallback.userInfo);
 		}
 
 		tickCount++;

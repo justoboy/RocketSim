@@ -1,6 +1,6 @@
 #pragma once
 
-#define RS_VERSION "2.2.2"
+#define RS_VERSION "2.2.3"
 
 #include <stdint.h>
 #include <iostream>
