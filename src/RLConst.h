@@ -199,6 +199,22 @@ namespace RLConst {
 			PUCK_RESTITUTION = 0.3f;
 	}
 
+	namespace SpikeRush {
+		// Local (car-space) offset of the attached puck relative to the carrier's center of mass.
+		// The puck sits slightly above the roof so it visually "rides" the car.
+		constexpr Vec ATTACH_LOCAL_OFFSET = Vec(0.f, 0.f, 100.f);
+
+		// A free puck within this world-space distance of a car's center auto-engages (welds).
+		constexpr float ATTACH_RADIUS = 150.f;
+
+		// Minimum time the puck must be attached before a jump-release is honored,
+		//	prevents a single-tick engage/release flicker on the engaging hit.
+		constexpr float MIN_ATTACH_TIME = 0.05f;
+
+		// Cooldown (seconds) after a release during which the puck cannot re-attach to a car.
+		constexpr float RELEASE_COOLDOWN = 0.1f;
+	}
+
 	namespace Dropshot {
 
 		// TODO: Some of these values are unconfirmed assumptions based on lots of testing,

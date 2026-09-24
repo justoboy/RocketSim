@@ -46,6 +46,22 @@ struct BallState : public PhysState {
 	};
 	DropshotInfo dsInfo;
 
+	struct AttachInfo {
+		// Which car the ball is currently welded to (0 = free ball, not attached)
+		uint32_t attachedCarId = 0;
+
+		// Offset of the ball relative to the carrier's center of mass, in the CARRIER's local space.
+		// World offset = carrier.rotMat * localOffset, so a flipped car keeps the puck glued to its roof.
+		Vec localOffset = {};
+
+		// Time (seconds) the ball has been attached to the current carrier.
+		float engageTimer = 0;
+
+		// Cooldown (seconds) after a release during which the ball cannot re-attach to the same car.
+		float releaseCooldown = 0;
+	};
+	AttachInfo attachInfo;
+
 	BallState() : PhysState() {
 		pos.z = RLConst::BALL_REST_Z;
 	}
@@ -59,7 +75,8 @@ struct BallState : public PhysState {
 #define BALLSTATE_SERIALIZATION_FIELDS \
 pos, rotMat, vel, angVel, \
 hsInfo.yTargetDir, hsInfo.curTargetSpeed, hsInfo.timeSinceHit, \
-dsInfo.chargeLevel, dsInfo.accumulatedHitForce, dsInfo.yTargetDir, dsInfo.hasDamaged, dsInfo.lastDamageTick \
+dsInfo.chargeLevel, dsInfo.accumulatedHitForce, dsInfo.yTargetDir, dsInfo.hasDamaged, dsInfo.lastDamageTick, \
+attachInfo.attachedCarId, attachInfo.localOffset, attachInfo.engageTimer, attachInfo.releaseCooldown \
 
 class Ball {
 public:
@@ -96,7 +113,7 @@ public:
 	// Returns mass
 	float GetMass() const;
 
-	void _PreTickUpdate(GameMode gameMode, float tickTime);
+	void _PreTickUpdate(GameMode gameMode, float tickTime, const std::unordered_set<class Car*>& cars);
 	void _OnHit(
 		class Car* car, Vec relPos,
 		float& outFriction, float& outRestitution,

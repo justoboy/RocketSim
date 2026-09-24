@@ -53,6 +53,8 @@ std::vector<btBvhTriangleMeshShape*>& RocketSim::GetArenaCollisionShapes(GameMod
 	switch (gameMode) {
 	case GameMode::SNOWDAY:
 	case GameMode::HEATSEEKER:
+	case GameMode::SPIKE_RUSH:
+	case GameMode::GRIDIRON:
 		gameMode = GameMode::SOCCAR;
 	}
 

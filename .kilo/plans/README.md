@@ -11,6 +11,15 @@ This repo (`D:/RLBotTraining/rocketsim`) is the RocketSim C++ simulation core (a
   existing `GameMode.DROPSHOT` / `DropshotTilesState` / `Ball.DropshotInfo` in the pybind layer and
   routes it through rlgym. No core change; wheel rebuild.
   [T14 - Dropshot Exposure (bindings + rlgym routing).md](./T14%20-%20Dropshot%20Exposure%20(bindings%20+%20rlgym%20routing).md)
+- **T16 — Handoff (bindings + rlgym):** the interface contract for the *other* repos to consume the
+  T13/T14 core changes — bind `GameMode.SPIKE_RUSH`/`GRIDIRON` + `BallState.attach_info` + dropshot
+  tile state in the pybind wheel, rebuild/install into the custombot venv, and route through rlgym.
+  (Owned by the bindings/rlgym tracks, not the rocketsim core.)
+  [T16 - Ball-Attach & Dropshot Bindings + rlgym Routing (handoff).md](./T16%20-%20Ball-Attach%20%26%20Dropshot%20Bindings%20+%20rlgym%20Routing%20(handoff).md)
+
+**Status (Agent C / rocketsim core):** T13 core C++ is implemented and the core library builds clean
+at v2.2.2; T14 confirmed already-native (no core change). The wheel rebuild + rlgym routing are
+cross-repo and captured in T16.
 
 These are the C++/wheel-rebuild track. They run in parallel with the custombot (T9/T12/T15) and
 rlgym (T10/T11) Python tracks. The custombot master index lives at
