@@ -5,6 +5,7 @@ CMakeFiles
 CMakeScripts
 Testing
 Makefile
+!python-mtheall/Makefile
 cmake_install.cmake
 install_manifest.txt
 compile_commands.json
@@ -44,7 +45,13 @@ out/
 *.sln
 *.filters
 *.user
+build/
 CMakeSettings.json
 
 # Anything starting with three underscores
 ___*
+
+# python-mtheall
+python-mtheall/build/
+python-mtheall/dist/
+python-mtheall/RocketSim.egg-info/

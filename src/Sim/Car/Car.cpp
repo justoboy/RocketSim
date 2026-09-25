@@ -8,13 +8,15 @@ RS_NS_START
 
 // Update our internal state from bullet and return it
 CarState Car::GetState() {
-	_internalState.pos = _rigidBody.getWorldTransform().m_origin * BT_TO_UU;
+	if (!_internalState.isDemoed) {
+		_internalState.pos = _rigidBody.getWorldTransform().m_origin * BT_TO_UU;
 
-	// NOTE: rotMat already updated at the start of Car::_PostTickUpdate()
+		// NOTE: rotMat already updated at the start of Car::_PostTickUpdate()
 
-	_internalState.vel = _rigidBody.m_linearVelocity * BT_TO_UU;
+		_internalState.vel = _rigidBody.m_linearVelocity * BT_TO_UU;
 
-	_internalState.angVel = _rigidBody.m_angularVelocity;
+		_internalState.angVel = _rigidBody.m_angularVelocity;
+	}
 
 	return _internalState;
 }
@@ -241,9 +243,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
 	int extraCollisionMask = CollisionMasks::DROPSHOT_FLOOR;
 
 	// Add rigidbody to world
-	bulletWorld->addRigidBody(
-		&_rigidBody, btBroadphaseProxy::DefaultFilter | extraCollisionMask, btBroadphaseProxy::AllFilter
-	);
+	int mask = btBroadphaseProxy::AllFilter;
+	if (!mutatorConfig.enableCarCarCollision)
+		mask &= ~btBroadphaseProxy::CharacterFilter;
+	bulletWorld->addRigidBody(&_rigidBody, btBroadphaseProxy::CharacterFilter, mask | extraCollisionMask);
 
 	{ // Set up actual vehicle stuff
 		_bulletVehicleRaycaster = btDefaultVehicleRaycaster(bulletWorld);

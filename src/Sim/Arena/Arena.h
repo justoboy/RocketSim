@@ -21,8 +21,9 @@
 
 RS_NS_START
 
-typedef std::function<void(class Arena* arena, Team scoringTeam, void* userInfo)> GoalScoreEventFn;
-typedef std::function<void(class Arena* arena, Car* bumper, Car* victim, bool isDemo, void* userInfo)> CarBumpEventFn;
+using BoostPickupEventFn = void(*)(class Arena* arena, Car *car, BoostPad *boostPad, void* userInfo);
+using CarBumpEventFn     = void(*)(class Arena* arena, Car* bumper, Car* victim, bool isDemo, void* userInfo);
+using GoalScoreEventFn   = void(*)(class Arena* arena, Team scoringTeam, void* userInfo);
 
 // The container for all game simulation
 // Stores cars, the ball, all arena collisions, and manages the overall game state
@@ -102,16 +103,28 @@ public:
 	std::vector<btRigidBody*> _worldDropshotTileRBs = {};
 
 	struct {
-		GoalScoreEventFn func = NULL;
-		void* userInfo = NULL;
-	} _goalScoreCallback;
-	void SetGoalScoreCallback(GoalScoreEventFn callbackFn, void* userInfo = NULL);
+		BallTouchEventFn func = nullptr;
+		void* userInfo = nullptr;
+	} _ballTouchCallback;
+	void SetBallTouchCallback(BallTouchEventFn callbackFn, void* userInfo = nullptr);
 
 	struct {
-		CarBumpEventFn func = NULL;
-		void* userInfo = NULL;
+		BoostPickupEventFn func = nullptr;
+		void* userInfo = nullptr;
+	} _boostPickupCallback;
+	void SetBoostPickupCallback(BoostPickupEventFn callbackFn, void* userInfo = nullptr);
+
+	struct {
+		CarBumpEventFn func = nullptr;
+		void* userInfo = nullptr;
 	} _carBumpCallback;
-	void SetCarBumpCallback(CarBumpEventFn callbackFn, void* userInfo = NULL);
+	void SetCarBumpCallback(CarBumpEventFn callbackFn, void* userInfo = nullptr);
+
+	struct {
+		GoalScoreEventFn func = nullptr;
+		void* userInfo = nullptr;
+	} _goalScoreCallback;
+	void SetGoalScoreCallback(GoalScoreEventFn callbackFn, void* userInfo = nullptr);
 
 	// NOTE: Arena should be destroyed after use
 	static Arena* Create(GameMode gameMode, const ArenaConfig& arenaConfig = {}, float tickRate = 120);
@@ -136,6 +149,9 @@ public:
 
 	// Simulate everything in the arena for a given number of ticks
 	void Step(int ticksToSimulate = 1);
+
+	// Stop simulation
+	void Stop();
 
 	void ResetToRandomKickoff(int seed = -1);
 
@@ -184,8 +200,13 @@ public:
 	DropshotTilesState GetDropshotTilesState() const { return _dropshotTilesState; };
 	void SetDropshotTilesState(const DropshotTilesState& tilesState);
 
+	void SetCarCarCollision(bool enable);
+	void SetCarBallCollision(bool enable);
+
 private:
-	
+	// Whether to stop
+	bool _stop = false;
+
 	// Constructor for use by Arena::Create()
 	Arena(GameMode gameMode, const ArenaConfig& config, float tickRate = 120);
 

@@ -24,8 +24,8 @@ struct BoostPadState {
 	bool isActive = true;
 	float cooldown = 0;
 
-	Car* curLockedCar = NULL;
-	uint32_t prevLockedCarID = NULL;
+	Car* curLockedCar = nullptr;
+	uint32_t prevLockedCarID = 0;
 
 	void Serialize(DataStreamOut& out) const;
 	void Deserialize(DataStreamIn& in);
@@ -52,7 +52,7 @@ public:
 	void _CheckCollide(Car* car);
 
 	void _PreTickUpdate(float tickTime);
-	void _PostTickUpdate(float tickTime, const MutatorConfig& mutatorConfig);
+	bool _PostTickUpdate(float tickTime, const MutatorConfig& mutatorConfig);
 private:
 	BoostPad() {}
 };

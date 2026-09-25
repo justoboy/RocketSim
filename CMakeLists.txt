@@ -1,14 +1,75 @@
-﻿cmake_minimum_required (VERSION 3.8)
+cmake_minimum_required(VERSION 3.26)
 
-project("RocketSim")
+project(RocketSim)
 
-# Add all headers and code files
-file(GLOB_RECURSE FILES_ROCKETSIM "${PROJECT_SOURCE_DIR}/src/*.cpp" "${PROJECT_SOURCE_DIR}/src/*.h")
+find_package(Python3 COMPONENTS Interpreter Development.SABIModule NumPy REQUIRED)
 
-# Only include bullet headers when using MSVC, otherwise just code files
-file(GLOB_RECURSE FILES_BULLET "${PROJECT_SOURCE_DIR}/libsrc/bullet3-3.24/*.cpp" "${PROJECT_SOURCE_DIR}/libsrc/bullet3-3.24/*.h")
+include(CheckIPOSupported)
+check_ipo_supported(RESULT IPO_SUPPORTED)
 
-add_library(RocketSim ${FILES_ROCKETSIM} ${FILES_BULLET})
+file(GLOB_RECURSE ROCKETSIM_BULLET3_SOURCES libsrc/bullet3-3.24/*.cpp)
+file(GLOB_RECURSE ROCKETSIM_SOURCES src/*.cpp)
+file(GLOB ROCKETSIM_PYTHON_SOURCES python-mtheall/*.cpp)
 
-set_target_properties(RocketSim PROPERTIES LINKER_LANGUAGE CXX)
-set_target_properties(RocketSim PROPERTIES CXX_STANDARD 20)
+Python3_add_library(${PROJECT_NAME} MODULE USE_SABI "3.9" WITH_SOABI)
+
+target_sources(${PROJECT_NAME} PRIVATE
+	${ROCKETSIM_BULLET3_SOURCES}
+	${ROCKETSIM_SOURCES}
+	${ROCKETSIM_PYTHON_SOURCES}
+)
+
+if(IPO_SUPPORTED)
+	set_target_properties(${PROJECT_NAME} PROPERTIES
+		INTERPROCEDURAL_OPTIMIZATION TRUE
+		INTERPROCEDURAL_OPTIMIZATION_DEBUG FALSE
+		INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
+		INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE
+		INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL TRUE
+	)
+endif()
+
+target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
+
+set_target_properties(${PROJECT_NAME} PROPERTIES C_VISIBILITY_PRESET hidden)
+set_target_properties(${PROJECT_NAME} PROPERTIES CXX_VISIBILITY_PRESET hidden)
+
+target_include_directories(${PROJECT_NAME} PRIVATE
+	${PROJECT_SOURCE_DIR}/libsrc
+	${PROJECT_SOURCE_DIR}/src
+)
+
+target_link_libraries(${PROJECT_NAME} PRIVATE Python3::SABIModule Python3::NumPy)
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+	PY_SSIZE_T_CLEAN=1
+	NPY_NO_DEPRECATED_API=NPY_1_7_API_VERSION
+	PY_ARRAY_UNIQUE_SYMBOL=RocketSim_ARRAY_API
+	NO_IMPORT_ARRAY=1
+	RS_DONT_LOG=1
+    XXH_INLINE_ALL=1
+    XXH_STATIC_LINKING_ONLY=1
+)
+
+if(CMAKE_INSTALL_PREFIX MATCHES "cmeel.prefix")
+	install(TARGETS ${PROJECT_NAME}
+		LIBRARY DESTINATION ..
+	)
+
+	install(FILES ${PROJECT_NAME}.pyi
+    	DESTINATION ..
+    )
+else()
+	execute_process(
+		COMMAND ${Python3_EXECUTABLE} -m site --user-site
+		OUTPUT_VARIABLE USER_SITE
+		OUTPUT_STRIP_TRAILING_WHITESPACE
+	)
+
+	install(TARGETS ${PROJECT_NAME}
+		LIBRARY DESTINATION ${USER_SITE}
+	)
+	install(FILES ${PROJECT_NAME}.pyi
+    	DESTINATION ${USER_SITE}
+    )
+endif()

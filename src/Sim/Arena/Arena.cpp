@@ -21,6 +21,9 @@ void Arena::SetMutatorConfig(const MutatorConfig& mutatorConfig) {
 		carMassChanged = mutatorConfig.carMass != this->_mutatorConfig.carMass,
 		gravityChanged = mutatorConfig.gravity != this->_mutatorConfig.gravity;
 
+	bool prevCarBallCollision = this->_mutatorConfig.enableCarBallCollision;
+	bool prevCarCarCollision = this->_mutatorConfig.enableCarCarCollision;
+
 	this->_mutatorConfig = mutatorConfig;
 
 	_bulletWorld.setGravity(mutatorConfig.gravity * UU_TO_BT);
@@ -45,6 +48,12 @@ void Arena::SetMutatorConfig(const MutatorConfig& mutatorConfig) {
 	ball->_rigidBody.setFriction(mutatorConfig.ballWorldFriction);
 	ball->_rigidBody.setRestitution(mutatorConfig.ballWorldRestitution);
 	ball->_rigidBody.setDamping(mutatorConfig.ballDrag, 0);
+
+	if (prevCarBallCollision != this->_mutatorConfig.enableCarBallCollision)
+		SetCarBallCollision (this->_mutatorConfig.enableCarBallCollision);
+
+	if (prevCarCarCollision != this->_mutatorConfig.enableCarCarCollision)
+		SetCarCarCollision (this->_mutatorConfig.enableCarCarCollision);
 }
 
 Car* Arena::AddCar(Team team, const CarConfig& config) {
@@ -95,6 +104,19 @@ bool Arena::RemoveCar(uint32_t id) {
 
 Car* Arena::GetCar(uint32_t id) {
 	return _carIDMap[id];
+}
+
+void Arena::SetBallTouchCallback(BallTouchEventFn callbackFunc, void* userInfo) {
+	_ballTouchCallback.func = callbackFunc;
+	_ballTouchCallback.userInfo = userInfo;
+}
+
+void Arena::SetBoostPickupCallback(BoostPickupEventFn callbackFunc, void* userInfo) {
+	if (gameMode == GameMode::THE_VOID)
+		RS_ERR_CLOSE("Cannot set a boost pickup callback when on THE_VOID gamemode!");
+
+	_boostPickupCallback.func = callbackFunc;
+	_boostPickupCallback.userInfo = userInfo;
 }
 
 void Arena::SetGoalScoreCallback(GoalScoreEventFn callbackFunc, void* userInfo) {
@@ -347,11 +369,11 @@ void Arena::_BtCallback_OnCarBallCollision(Car* car, Ball* ball, btManifoldPoint
 		auto& info = ball->_internalState.attachInfo;
 		Car* carrier = (info.attachedCarId != 0) ? GetCar(info.attachedCarId) : nullptr;
 		Vec worldBallPos = ball->GetState().pos;
-		if (ball->_OnAttach(car, carrier, worldBallPos, gameMode))
+		if (ball->_OnAttach(car, carrier, worldBallPos, gameMode, this, _ballTouchCallback.func, _ballTouchCallback.userInfo))
 			return; // Welded (or carrier invulnerable): suppress the normal hit impulse.
 	}
 
-	ball->_OnHit(car, relBallPos, manifoldPoint.m_combinedFriction, manifoldPoint.m_combinedRestitution, gameMode, _mutatorConfig, tickCount);
+	ball->_OnHit(car, relBallPos, manifoldPoint.m_combinedFriction, manifoldPoint.m_combinedRestitution, gameMode, _mutatorConfig, tickCount, this, _ballTouchCallback.func, _ballTouchCallback.userInfo);
 }
 
 void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint& manifoldPoint) {
@@ -712,18 +734,23 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
 Arena* Arena::Clone(bool copyCallbacks) {
 	Arena* newArena = new Arena(this->gameMode, this->_config, this->GetTickRate());
 	
-	if (copyCallbacks) {
-		newArena->_goalScoreCallback = this->_goalScoreCallback;
-		newArena->_carBumpCallback = this->_carBumpCallback;
+	if (copyCallbacks)
+	{
+		newArena->_ballTouchCallback   = this->_ballTouchCallback;
+		newArena->_boostPickupCallback = this->_boostPickupCallback;
+		newArena->_carBumpCallback     = this->_carBumpCallback;
+		newArena->_goalScoreCallback   = this->_goalScoreCallback;
 	}
-
+	
 	newArena->ball->SetState(this->ball->GetState());
+	newArena->ball->_internalState.tickCountSinceUpdate = this->ball->_internalState.tickCountSinceUpdate;
 	newArena->ball->_velocityImpulseCache = this->ball->_velocityImpulseCache;
 
 	for (Car* car : this->_cars) {
 		Car* newCar = newArena->AddCar(car->team, car->config);
 		
 		newCar->SetState(car->GetState());
+		newCar->_internalState.tickCountSinceUpdate = car->_internalState.tickCountSinceUpdate;
 		newCar->id = car->id;
 		newCar->controls = car->controls;
 		newCar->_velocityImpulseCache = car->_velocityImpulseCache;
@@ -753,7 +780,9 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
 }
 
 void Arena::Step(int ticksToSimulate) {
-	for (int i = 0; i < ticksToSimulate; i++) {
+	_stop = false;
+
+	for (int i = 0; i < ticksToSimulate && !_stop; i++) {
 
 		_bulletWorld.setWorldUserInfo(this);
 
@@ -807,8 +836,13 @@ void Arena::Step(int ticksToSimulate) {
 		}
 
 		if (hasArenaStuff && !ballOnly)
+		{
 			for (BoostPad* pad : _boostPads)
-				pad->_PostTickUpdate(tickTime, _mutatorConfig);
+			{
+				if (pad->_PostTickUpdate(tickTime, _mutatorConfig) && _boostPickupCallback.func)
+					_boostPickupCallback.func(this, pad->_internalState.curLockedCar, pad, _boostPickupCallback.userInfo);
+			}
+		}
 
 		ball->_FinishPhysicsTick(_mutatorConfig);
 
@@ -830,6 +864,10 @@ void Arena::Step(int ticksToSimulate) {
 
 		tickCount++;
 	}
+}
+
+void Arena::Stop() {
+	_stop = true;
 }
 
 // Returns negative: within
@@ -1163,6 +1201,29 @@ void Arena::_SetupArenaCollisionShapes() {
 			_worldDropshotTileRBs.push_back(tileRB);
 		}
 	}
+}
+
+void Arena::SetCarCarCollision(bool enable)
+{
+	_mutatorConfig.enableCarCarCollision = enable;
+
+	int mask = btBroadphaseProxy::AllFilter;
+	if (!enable)
+		mask &= ~btBroadphaseProxy::CharacterFilter;
+
+	for (auto &car : _cars)
+		car->_rigidBody.getBroadphaseHandle ()->m_collisionFilterMask = mask;
+}
+
+void Arena::SetCarBallCollision(bool enable)
+{
+	_mutatorConfig.enableCarBallCollision = enable;
+
+	int mask = btBroadphaseProxy::AllFilter;
+	if (!enable)
+		mask &= ~btBroadphaseProxy::CharacterFilter;
+
+	ball->_rigidBody.getBroadphaseHandle ()->m_collisionFilterMask = mask;
 }
 
 RS_NS_END

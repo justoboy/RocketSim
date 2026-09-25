@@ -15,6 +15,10 @@ class btDynamicsWorld;
 
 RS_NS_START
 
+class Arena;
+class Car;
+using BallTouchEventFn = void(*)(class Arena* arena, Car *car, void* userInfo);
+
 struct BallState : public PhysState {
 	// Incremented every update, reset when SetState() is called
 	// Used for telling if a stateset occured
@@ -70,6 +74,9 @@ struct BallState : public PhysState {
 	};
 	AttachInfo attachInfo;
 
+	// ID of the last car that hit the ball (added by the bindings track; used for touch attribution).
+	std::uint32_t lastHitCarID = 0;
+
 	BallState() : PhysState() {
 		pos.z = RLConst::BALL_REST_Z;
 	}
@@ -84,7 +91,8 @@ struct BallState : public PhysState {
 pos, rotMat, vel, angVel, \
 hsInfo.yTargetDir, hsInfo.curTargetSpeed, hsInfo.timeSinceHit, \
 dsInfo.chargeLevel, dsInfo.accumulatedHitForce, dsInfo.yTargetDir, dsInfo.hasDamaged, dsInfo.lastDamageTick, \
-attachInfo.attachedCarId, attachInfo.lastCarrierId, attachInfo.localOffset, attachInfo.engageTimer, attachInfo.releaseCooldown, attachInfo.active \
+attachInfo.attachedCarId, attachInfo.lastCarrierId, attachInfo.localOffset, attachInfo.engageTimer, attachInfo.releaseCooldown, attachInfo.active, \
+lastHitCarID \
 
 class Ball {
 public:
@@ -127,11 +135,15 @@ public:
 	//	Handles first engage (free -> attached) and steal (attached -> toucher), respecting the
 	//	carrier's post-possession invulnerability window. In SPIKE_RUSH a steal also demos the carrier.
 	//	Returns true if the ball is now welded (caller should suppress the normal hit impulse).
-	bool _OnAttach(class Car* toucher, class Car* carrier, Vec worldBallPos, GameMode gameMode);
+	bool _OnAttach(class Car* toucher, class Car* carrier, Vec worldBallPos, GameMode gameMode,
+		class Arena* arena, BallTouchEventFn ballTouchEventFunc, void* ballTouchEventUserInfo);
 	void _OnHit(
 		class Car* car, Vec relPos,
 		float& outFriction, float& outRestitution,
-		GameMode gameMode, const MutatorConfig& mutatorConfig, uint64_t tickCount
+		GameMode gameMode, const MutatorConfig& mutatorConfig, uint64_t tickCount,
+		Arena *arena,
+		BallTouchEventFn ballTouchEventFunc,
+		void* ballTouchEventUserInfo
 	);
 	void _OnWorldCollision(GameMode gameMode, Vec normal, float tickTime);
 	// Returns true if the tiles state was modified

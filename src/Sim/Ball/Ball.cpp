@@ -135,10 +135,10 @@ void Ball::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const M
 
 	_rigidBody.m_noRot = noRot && (_collisionShape->getShapeType() == SPHERE_SHAPE_PROXYTYPE);
 
-	bulletWorld->addRigidBody(
-		&_rigidBody,
-		btBroadphaseProxy::DefaultFilter | CollisionMasks::HOOPS_NET | CollisionMasks::DROPSHOT_TILE, btBroadphaseProxy::AllFilter
-	);
+	int mask = btBroadphaseProxy::AllFilter;
+	if (!mutatorConfig.enableCarBallCollision)
+		mask &= ~btBroadphaseProxy::CharacterFilter;
+	bulletWorld->addRigidBody(&_rigidBody, btBroadphaseProxy::DefaultFilter | CollisionMasks::HOOPS_NET | CollisionMasks::DROPSHOT_TILE, mask);
 }
 
 void Ball::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
@@ -364,7 +364,8 @@ void Ball::_PreTickUpdate(GameMode gameMode, float tickTime, const std::unordere
 	}
 }
 
-bool Ball::_OnAttach(Car* toucher, Car* carrier, Vec worldBallPos, GameMode gameMode) {
+bool Ball::_OnAttach(Car* toucher, Car* carrier, Vec worldBallPos, GameMode gameMode,
+	class Arena* arena, BallTouchEventFn ballTouchEventFunc, void* ballTouchEventUserInfo) {
 	using namespace RLConst;
 	auto& info = _internalState.attachInfo;
 
@@ -388,6 +389,9 @@ bool Ball::_OnAttach(Car* toucher, Car* carrier, Vec worldBallPos, GameMode game
 		}
 		info.engageTimer = 0;
 		info.releaseCooldown = 0;
+		_internalState.lastHitCarID = toucher->id;
+		if (ballTouchEventFunc)
+			ballTouchEventFunc(arena, toucher, ballTouchEventUserInfo);
 		return true;
 	}
 
@@ -414,13 +418,19 @@ bool Ball::_OnAttach(Car* toucher, Car* carrier, Vec worldBallPos, GameMode game
 	}
 	info.engageTimer = 0;
 	info.releaseCooldown = 0;
+	_internalState.lastHitCarID = toucher->id;
+	if (ballTouchEventFunc)
+		ballTouchEventFunc(arena, toucher, ballTouchEventUserInfo);
 	return true;
 }
 
 void Ball::_OnHit(
 	Car* car, Vec relPos,
 	float& outFriction, float& outRestitution,
-	GameMode gameMode, const MutatorConfig& mutatorConfig, uint64_t tickCount
+	GameMode gameMode, const MutatorConfig& mutatorConfig, uint64_t tickCount,
+	Arena *arena,
+	BallTouchEventFn ballTouchEventFunc,
+	void* ballTouchEventUserInfo
 ) {
 	using namespace RLConst;
 
@@ -446,6 +456,11 @@ void Ball::_OnHit(
 
 	ballHitInfo.ballPos = ballState.pos;
 	ballHitInfo.extraHitVel = Vec();
+
+	_internalState.lastHitCarID = car->id;
+
+	if (ballTouchEventFunc)
+		ballTouchEventFunc(arena, car, ballTouchEventUserInfo);
 
 	// Once we do an extra car-ball impulse, we need to wait at least 1 tick to do it again
 	if ((tickCount > ballHitInfo.tickCountWhenExtraImpulseApplied + 1) || (ballHitInfo.tickCountWhenExtraImpulseApplied > tickCount)) {
