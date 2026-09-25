@@ -129,4 +129,30 @@ std::vector<int> DropshotTiles::GetNeighborIndices(int startIdx, int radius) {
 	}
 }
 
+int DropshotTiles::GetTileIndexAt(Vec worldPos, int* teamOut) {
+	using namespace RLConst;
+
+	int bestIdx = -1;
+	int bestTeam = -1;
+	float bestDistSq = FLT_MAX;
+
+	for (int team = 0; team <= 1; team++) {
+		for (int i = 0; i < Dropshot::NUM_TILES_PER_TEAM; i++) {
+			Vec pos = GetTilePos(team, i);
+			float dx = pos.x - worldPos.x;
+			float dy = pos.y - worldPos.y;
+			float distSq = dx * dx + dy * dy;
+			if (distSq < bestDistSq) {
+				bestDistSq = distSq;
+				bestIdx = i;
+				bestTeam = team;
+			}
+		}
+	}
+
+	if (teamOut)
+		*teamOut = bestTeam;
+	return bestIdx;
+}
+
 RS_NS_END

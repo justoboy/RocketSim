@@ -1000,8 +1000,46 @@ bool Arena::IsBallProbablyGoingIn(float maxTime, float extraMargin, Team* goalTe
 			return false;
 		}
 
+	} else if (gameMode == GameMode::DROPSHOT) {
+		// In dropshot the ball scores by falling through a BROKEN tile into the pit below.
+		//	"Probably going in" = extrapolate to the tile plane (z=0) and check whether the tile
+		//	under the landing point is broken (so the ball will drop through it).
+		float g = _mutatorConfig.gravity.z;
+		if (g > -FLT_EPSILON)
+			return false;
+
+		float v = ballVel.z;
+		float h = ballPos.z; // height above the tile plane (z = 0)
+
+		float sqrtInput = v * v - 2 * g * h;
+		if (sqrtInput <= 0)
+			return false; // never reaches the tile plane
+
+		float r1 = (-v + sqrtf(sqrtInput)) / g;
+		float r2 = (-v - sqrtf(sqrtInput)) / g;
+		float t = FLT_MAX;
+		if (r1 > 0) t = RS_MIN(t, r1);
+		if (r2 > 0) t = RS_MIN(t, r2);
+		if (t == FLT_MAX || t > maxTime)
+			return false;
+
+		Vec extrapPos = ballPos + (ballVel * t) + (_mutatorConfig.gravity * t * t) / 2;
+
+		int tileTeam = -1;
+		int tileIdx = DropshotTiles::GetTileIndexAt(extrapPos, &tileTeam);
+		if (tileIdx < 0 || tileTeam < 0)
+			return false;
+
+		if (_dropshotTilesState.states[tileTeam][tileIdx].damageState != DropshotTileState::STATE_BROKEN)
+			return false; // tile not broken, ball won't fall through
+
+		if (goalTeamOut) {
+			Vec tilePos = DropshotTiles::GetTilePos(tileTeam, tileIdx);
+			*goalTeamOut = RS_TEAM_FROM_Y(-tilePos.y);
+		}
+		return true;
 	} else {
-		RS_ERR_CLOSE("Arena::IsBallProbablyGoingIn() is not supported for gamemode " << GAMEMODE_STRS[(int)gameMode]);
+		// THE_VOID (or any future mode) has no goal to score into.
 		return false;
 	}
 }
