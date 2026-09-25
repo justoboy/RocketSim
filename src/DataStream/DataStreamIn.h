@@ -3,8 +3,9 @@
 
 #include "SerializeObject.h"
 
-RS_NS_START
+#include <cstring>
 
+RS_NS_START
 // Basic struct for reading raw data from a file
 struct DataStreamIn {
 	std::vector<byte> data;

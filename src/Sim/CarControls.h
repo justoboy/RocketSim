@@ -1,27 +1,24 @@
 #pragma once
 #include "../BaseInc.h"
 
+#include <cstring>
+
 RS_NS_START
 
 // Stores all control inputs to a car
 struct CarControls {
 	// Driving control
-	float throttle, steer;
+	float throttle = 0.0f, steer = 0.0f;
 
 	// Air orientation control
-	float pitch, yaw, roll;
+	float pitch = 0.0f, yaw = 0.0f, roll = 0.0f;
 
 	// Boolean action inputs
-	bool jump, boost, handbrake;
+	bool jump = false, boost = false, handbrake = false;
 
 	// Rumble "powerup" button. In SPIKE_RUSH this releases an already-attached ball
 	//	(no-op when nothing is attached; you cannot pre-arm the spikes). Unused in GRIDIRON.
 	bool powerup;
-
-	CarControls() {
-		// Initialize everything as zero
-		memset(this, 0, sizeof(CarControls));
-	}
 
 	// Makes all values range-valid (clamps from -1 to 1)
 	void ClampFix() {

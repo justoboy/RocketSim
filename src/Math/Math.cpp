@@ -1,5 +1,7 @@
 #include "Math.h"
 
+#include <thread>
+
 RS_NS_START
 
 float LinearPieceCurve::GetOutput(float input, float defaultOutput) const {

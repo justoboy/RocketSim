@@ -5,13 +5,11 @@ RS_NS_START
 
 // RocketSim 3D vector struct
 struct RS_ALIGN_16 Vec {
-	float x, y, z;
+	float x = 0, y = 0, z = 0;
 
-	float _w; // 4th component to get compiler to use SIMD operations
+	float _w = 0; // 4th component to get compiler to use SIMD operations
 
-	constexpr Vec() {
-		x = y = z = _w = 0;
-	}
+	constexpr Vec() = default;
 
 	constexpr Vec(float x, float y, float z) : x(x), y(y), z(z), _w(0) {}
 
@@ -104,7 +102,7 @@ public:
 		return ((float*)this)[index];
 	}
 
-	constexpr float operator[](uint32_t index) const {
+	float operator[](uint32_t index) const {
 		assert(index >= 0 && index < 3);
 		return ((float*)this)[index];
 	}

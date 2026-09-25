@@ -15,6 +15,12 @@ enum class ArenaMemWeightMode : byte {
 	// Measurements last updated 2024/5/9
 };
 
+// Custom boost pad
+struct CustomBoostPad {
+	Vec pos    = Vec(0, 0, 0);
+	bool isBig = false;
+};
+
 struct ArenaConfig {
 
 	ArenaMemWeightMode memWeightMode = ArenaMemWeightMode::HEAVY;

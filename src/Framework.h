@@ -2,7 +2,8 @@
 
 #define RS_VERSION "2.2.3"
 
-#include <stdint.h>
+#include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -32,7 +33,6 @@
 
 #define _USE_MATH_DEFINES // for M_PI and similar
 #include <cmath>
-#include <math.h>
 
 #ifdef _MSC_VER
 // Disable annoying truncation warnings on MSVC
