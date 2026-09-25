@@ -576,4 +576,28 @@ int BallState::Setang_vel (BallState *self_, PyObject *value_, void *) noexcept
 
 	return 0;
 }
+
+PyObject *BallState::Getlocal_offset (BallState *self_, void *) noexcept
+{
+	return PyRef<Vec>::incRef (self_->localOffset).giftObject ();
+}
+
+int BallState::Setlocal_offset (BallState *self_, PyObject *value_, void *) noexcept
+{
+	if (!value_)
+	{
+		PyErr_SetString (PyExc_AttributeError, "can't delete 'local_offset' attribute of 'RocketSim.BallState' objects");
+		return -1;
+	}
+
+	if (!Py_IS_TYPE (value_, Vec::Type))
+	{
+		PyErr_SetString (PyExc_TypeError, "attribute value type must be RocketSim.Vec");
+		return -1;
+	}
+
+	PyRef<Vec>::assign (self_->localOffset, value_);
+
+	return 0;
+}
 }
