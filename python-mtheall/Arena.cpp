@@ -502,6 +502,12 @@ Returns `default` if car doesn't exist)"},
         .ml_meth  = (PyCFunction)&Arena::GetBoostPads,
         .ml_flags = METH_NOARGS,
         .ml_doc   = R"(get_boost_pads(self) -> List[RocketSim.BoostPad])"},
+    {.ml_name     = "get_dropshot_tiles_state",
+        .ml_meth  = (PyCFunction)&Arena::GetDropshotTilesState,
+        .ml_flags = METH_NOARGS,
+        .ml_doc   = R"(get_dropshot_tiles_state(self) -> numpy.array
+        Returns dropshot tile damage states as numpy.array([team][tile_index]) of int
+        (0 = full, 1 = damaged, 2 = broken). Only meaningful in DROPSHOT mode.)"},
     {.ml_name     = "get_gym_state",
         .ml_meth  = (PyCFunction)&Arena::GetGymState,
         .ml_flags = METH_NOARGS,
@@ -761,6 +767,9 @@ int Arena::Init (Arena *self_, PyObject *args_, PyObject *kwds_) noexcept
 		case RocketSim::GameMode::SOCCAR:
 		case RocketSim::GameMode::HOOPS:
 		case RocketSim::GameMode::SNOWDAY:
+		case RocketSim::GameMode::DROPSHOT:
+		case RocketSim::GameMode::SPIKE_RUSH:
+		case RocketSim::GameMode::GRIDIRON:
 			self_->gameEvent = new RocketSim::GameEventTracker{};
 			self_->gameEvent->SetShotCallback (&Arena::HandleShotEventCallback, self_);
 			self_->gameEvent->SetGoalCallback (&Arena::HandleGoalEventCallback, self_);
@@ -1250,6 +1259,9 @@ PyObject *Arena::Unpickle (Arena *self_, PyObject *dict_) noexcept
 	case RocketSim::GameMode::HOOPS:
 	case RocketSim::GameMode::HEATSEEKER:
 	case RocketSim::GameMode::SNOWDAY:
+	case RocketSim::GameMode::DROPSHOT:
+	case RocketSim::GameMode::SPIKE_RUSH:
+	case RocketSim::GameMode::GRIDIRON:
 	case RocketSim::GameMode::THE_VOID:
 		break;
 
@@ -2046,6 +2058,21 @@ PyObject *Arena::GetBoostPads (Arena *self_) noexcept
 	}
 
 	return list.gift ();
+}
+
+PyObject *Arena::GetDropshotTilesState (Arena *self_) noexcept
+{
+	auto const &tiles = self_->arena->GetDropshotTilesState ();
+
+	auto array = PyArrayRef (RocketSim::RLConst::Dropshot::TEAM_AMOUNT, RocketSim::RLConst::Dropshot::NUM_TILES_PER_TEAM);
+	if (!array)
+		return nullptr;
+
+	for (int team = 0; team < RocketSim::RLConst::Dropshot::TEAM_AMOUNT; ++team)
+		for (int tile = 0; tile < RocketSim::RLConst::Dropshot::NUM_TILES_PER_TEAM; ++tile)
+			array (team, tile) = static_cast<float> (tiles.states[team][tile].damageState);
+
+	return array.giftObject ();
 }
 
 PyObject *Arena::GetGymState (Arena *self_) noexcept

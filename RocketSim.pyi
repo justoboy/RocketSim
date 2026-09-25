@@ -217,6 +217,13 @@ class Arena:
         """
         ...
 
+    def get_dropshot_tiles_state(self) -> numpy.ndarray:
+        """
+        Return dropshot tile damage states as numpy.array([team][tile_index]) of int
+        (0 = full, 1 = damaged, 2 = broken). Only meaningful in DROPSHOT mode.
+        """
+        ...
+
     def get_gym_state(self) -> tuple:
         """
         Get the current arena state in an RLGym-compatible format.
@@ -540,9 +547,25 @@ class BallState:
     # ID of the last car that hit the ball
     last_hit_car_id: int
 
+    # Ball-attach info (Spike Rush / Gridiron)
+    attached_car_id: int  # id of car the ball is welded to (0 = free)
+    last_carrier_id: int  # id of the car that most recently carried the ball
+    local_offset: Vec  # ball offset in carrier local space
+    engage_timer: float  # seconds the ball has been attached to the current carrier
+    release_cooldown: float  # cooldown (seconds) before the ball can re-attach to the same car
+    attach_active: bool  # true once the mode's attach mechanic is live
+
+    # Dropshot info
+    dropshot_charge_level: int  # charge level (1/2/3) controlling tile damage radius
+    dropshot_accumulated_hit_force: float  # accumulated hit force toward charge/supercharge
+    dropshot_y_target_dir: float  # which side of the field the ball can damage (0/-1/1)
+    dropshot_has_damaged: bool  # whether a tile has been damaged
+    dropshot_last_damage_tick: int  # tick of the last tile damage
+
     # Incremented every physics update, reset when set via set_state()
     # Used internally to detect state changes
     update_counter: int
+    tick_count_since_update: int
 
     def __init__(self, *args, **kwargs) -> None:
         """
@@ -704,6 +727,7 @@ class CarControls:
     handbrake: bool
     jump: bool
     pitch: float
+    powerup: bool  # Rumble powerup button (Spike Rush ball release)
     roll: float
     steer: float
     throttle: float
@@ -712,6 +736,7 @@ class CarControls:
                  throttle: float = 0.0, steer: float = 0.0,
                  pitch: float = 0.0, yaw: float = 0.0, roll: float = 0.0,
                  jump: bool = False, boost: bool = False, handbrake: bool = False,
+                 powerup: bool = False,
                  *args, **kwargs) -> None: ...
     def clamp_fix(self, *args, **kwargs): """Makes all values range-valid (champs from -1 to 1) """ ...
     def __copy__(self) -> CarControls: ...
@@ -821,10 +846,13 @@ class DemoMode:
     ON_CONTACT: ClassVar[int] = ...
 
 class GameMode:
+    DROPSHOT: ClassVar[int] = ...
+    GRIDIRON: ClassVar[int] = ...
     HEATSEEKER: ClassVar[int] = ...
     HOOPS: ClassVar[int] = ...
     SNOWDAY: ClassVar[int] = ...
     SOCCAR: ClassVar[int] = ...
+    SPIKE_RUSH: ClassVar[int] = ...
     THE_VOID: ClassVar[int] = ...
 
 class MemoryWeightMode:
