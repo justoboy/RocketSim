@@ -47,6 +47,16 @@ struct AttachInfo {
 - `IsBallScored()` / `IsBallProbablyGoingIn()` treat SPIKE_RUSH/GRIDIRON like soccar goals.
 - Core keeps **no score / no match-end** (same as heatseeker). rlgym owns 7/3/own-goal + first-to-50.
 
+### DROPSHOT shot/goal/save events (fix, commit 424385b)
+- `IsBallProbablyGoingIn()` previously **threw** for DROPSHOT (it only handled soccar/hoops). Because the
+  bindings call `GameEventTracker::Update()` every tick (which calls this), the throw hit the `noexcept`
+  bindings `Step` and aborted the process (`0xC0000409`). **Fixed:** DROPSHOT now extrapolates the ball to
+  the tile plane and returns true only when the tile under the landing point is `STATE_BROKEN` (ball drops
+  into the pit). THE_VOID returns `false` instead of throwing.
+- Net effect for rlgym: **shot / goal / save events now fire correctly in DROPSHOT** (a shot only counts once
+  a tile is broken so the ball can fall through). No new bindings needed — this is core behavior behind the
+  existing `GameEventTracker` shot/goal/save callbacks.
+
 ## Bindings repo (pybind → `RocketSim` python module) — TODO for that track
 
 1. **Locate + fork the pybind repo** that produces the installed `RocketSim` wheel (NOT the rocketsim
