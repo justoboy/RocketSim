@@ -839,6 +839,7 @@ struct Arena
 	static PyObject *CloneInto (Arena *self_, PyObject *args_, PyObject *kwds_) noexcept;
 	static PyObject *GetBallPrediction (Arena *self_, PyObject *args_, PyObject *kwds_) noexcept;
 	static PyObject *GetBoostPads (Arena *self_) noexcept;
+	static PyObject *GetDropshotTilesState (Arena *self_) noexcept;
 	static PyObject *GetCarFromId (Arena *self_, PyObject *args_, PyObject *kwds_) noexcept;
 	static PyObject *GetCars (Arena *self_) noexcept;
 	static PyObject *GetConfig (Arena *self_) noexcept;
