@@ -201,6 +201,34 @@ void _UpdateCellsDynamic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy, int 
 	}
 }
 
+// Fallback registration for a dynamic object whose AABB spans more than one cell (e.g. a car
+// whose rotation matrix diverged into a degenerate, non-orthonormal state). The normal dynamic
+// path only registers a proxy in the 3x3x3 neighborhood around its min-cell, which is only
+// correct when the AABB fits inside a single cell. For an oversized AABB we instead register it
+// across EVERY cell it spans (clamped to the grid), exactly like the static path. This lets us
+// handle the degenerate state gracefully instead of throwing across the noexcept C-ABI boundary
+// (which would call std::terminate and abort the whole process).
+template <bool ADD>
+void _UpdateCellsDynamicFull(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
+
+	int iMin, jMin, kMin, iMax, jMax, kMax;
+	_this->GetCellIndices(proxy->m_aabbMin, iMin, jMin, kMin);
+	_this->GetCellIndices(proxy->m_aabbMax, iMax, jMax, kMax);
+
+	for (int i = iMin; i <= iMax; i++) {
+		for (int j = jMin; j <= jMax; j++) {
+			for (int k = kMin; k <= kMax; k++) {
+				auto& cell = _this->GetCell(i, j, k);
+				if (ADD) {
+					cell.dynHandles.push_back(proxy);
+				} else {
+					cell.RemoveDyn(proxy);
+				}
+			}
+		}
+	}
+}
+
 btBroadphaseProxy* btRSBroadphase::createProxy(const btVector3& aabbMin, const btVector3& aabbMax, int shapeType, void* userPtr, int collisionFilterGroup, int collisionFilterMask, btCollisionDispatcher* /*dispatcher*/) {
 	if (m_numHandles >= m_maxHandles) {
 		THROW_ERR("Max handles exceeded when creating proxy");
@@ -225,10 +253,13 @@ btBroadphaseProxy* btRSBroadphase::createProxy(const btVector3& aabbMin, const b
 		_UpdateCellsStatic<true>(this, proxy);
 
 	} else {
-		if (aabbMin.distance2(aabbMax) > cellSizeSq)
-			THROW_ERR("Dynamic object's AABB size exceeds maximum cell size (" + std::to_string(aabbMin.distance(aabbMax)) + " > " + std::to_string(cellSize) + ")");
-
-		_UpdateCellsDynamic<true>(this, proxy, iIdx, jIdx, kIdx);
+		if (aabbMin.distance2(aabbMax) > cellSizeSq) {
+			// Degenerate/oversized dynamic AABB: register across the full span instead of the
+			// 3x3x3 neighborhood, and DO NOT throw (throwing here aborts the whole process).
+			_UpdateCellsDynamicFull<true>(this, proxy);
+		} else {
+			_UpdateCellsDynamic<true>(this, proxy, iIdx, jIdx, kIdx);
+		}
 		numDynProxies++;
 	}
 
@@ -269,7 +300,13 @@ void btRSBroadphase::destroyProxy(btBroadphaseProxy* proxyOrg, btCollisionDispat
 	if (sbp->isStatic) {
 		_UpdateCellsStatic<false>(this, sbp);
 	} else {
-		_UpdateCellsDynamic<false>(this, sbp, sbp->iIdx, sbp->jIdx, sbp->kIdx);
+		// Remove using the same scheme used at add: full-span if the stored AABB is oversized,
+		//  otherwise the 3x3x3 neighborhood. Keeps cell lists free of stale dynamic handles.
+		if (sbp->m_aabbMin.distance2(sbp->m_aabbMax) > cellSizeSq) {
+			_UpdateCellsDynamicFull<false>(this, sbp);
+		} else {
+			_UpdateCellsDynamic<false>(this, sbp, sbp->iIdx, sbp->jIdx, sbp->kIdx);
+		}
 		numDynProxies--;
 	}
 
@@ -296,26 +333,59 @@ void btRSBroadphase::setAabb(btBroadphaseProxy* proxy, const btVector3& aabbMin,
 			_UpdateCellsStatic<true>(this, sbp);
 		} else {
 
-			int oldIndex = sbp->cellIdx;
-			sbp->m_aabbMin = aabbMin;
-			sbp->m_aabbMax = aabbMax;
+			btVector3 oldMin = sbp->m_aabbMin;
+			btVector3 oldMax = sbp->m_aabbMax;
+			bool oldBig = oldMin.distance2(oldMax) > cellSizeSq;
+			bool newBig = aabbMin.distance2(aabbMax) > cellSizeSq;
 
-			int newIndex = GetCellIdx(aabbMin);
-			sbp->cellIdx = newIndex;
-
-			if (oldIndex != newIndex) {
-
-				if (numDynProxies > 1) {
+			if (oldBig || newBig) {
+				// At least one side is oversized: re-bins across the full span (no 3x3x3 gate).
+				// The remove scheme matches the scheme used at the previous add (determined by the
+				// stored old AABB size), so registration stays consistent across size transitions.
+				if (oldBig) {
+					_UpdateCellsDynamicFull<false>(this, sbp);
+				} else {
 					_UpdateCellsDynamic<false>(this, sbp, sbp->iIdx, sbp->jIdx, sbp->kIdx);
+				}
 
-					// TODO: Can determine newIndex from these
-					int iNew, jNew, kNew;
-					GetCellIndices(aabbMin, iNew, jNew, kNew);
-					sbp->iIdx = iNew;
-					sbp->jIdx = jNew;
-					sbp->kIdx = kNew;
+				sbp->m_aabbMin = aabbMin;
+				sbp->m_aabbMax = aabbMax;
 
+				int iNew, jNew, kNew;
+				GetCellIndices(aabbMin, iNew, jNew, kNew);
+				sbp->iIdx = iNew;
+				sbp->jIdx = jNew;
+				sbp->kIdx = kNew;
+				sbp->cellIdx = iNew * cellsY * cellsZ + jNew * cellsZ + kNew;
+
+				if (newBig) {
+					_UpdateCellsDynamicFull<true>(this, sbp);
+				} else {
 					_UpdateCellsDynamic<true>(this, sbp, iNew, jNew, kNew);
+				}
+			} else {
+
+				int oldIndex = sbp->cellIdx;
+				sbp->m_aabbMin = aabbMin;
+				sbp->m_aabbMax = aabbMax;
+
+				int newIndex = GetCellIdx(aabbMin);
+				sbp->cellIdx = newIndex;
+
+				if (oldIndex != newIndex) {
+
+					if (numDynProxies > 1) {
+						_UpdateCellsDynamic<false>(this, sbp, sbp->iIdx, sbp->jIdx, sbp->kIdx);
+
+						// TODO: Can determine newIndex from these
+						int iNew, jNew, kNew;
+						GetCellIndices(aabbMin, iNew, jNew, kNew);
+						sbp->iIdx = iNew;
+						sbp->jIdx = jNew;
+						sbp->kIdx = kNew;
+
+						_UpdateCellsDynamic<true>(this, sbp, iNew, jNew, kNew);
+					}
 				}
 			}
 		}
