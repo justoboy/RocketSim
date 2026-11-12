@@ -21,6 +21,25 @@
 
 RS_NS_START
 
+// TEMPORARY profiling instrumentation (perf engagement) - gated behind RS_PROF
+#ifdef RS_PROF
+#include <cstdio>
+#include <chrono>
+namespace RSProf {
+	struct Acc { double us = 0; uint64_t n = 0; };
+	extern Acc carsPre, padsPre, ballPre, bullet, carPost, padsCheck, padsPost, ballPost, scored;
+	inline double Dur(std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
+		return std::chrono::duration<double, std::micro>(b - a).count();
+	}
+	inline void AccAdd(Acc& a, double us) { a.us += us; a.n++; }
+	inline auto Now() { return std::chrono::steady_clock::now(); }
+	void Dump();
+}
+#define RS_PROF_ACC(acc, t0, t1) ::RocketSim::RSProf::AccAdd(acc, ::RocketSim::RSProf::Dur(t0, t1))
+#else
+#define RS_PROF_ACC(acc, t0, t1)
+#endif
+
 using BoostPickupEventFn = void(*)(class Arena* arena, Car *car, BoostPad *boostPad, void* userInfo);
 using CarBumpEventFn     = void(*)(class Arena* arena, Car* bumper, Car* victim, bool isDemo, void* userInfo);
 using GoalScoreEventFn   = void(*)(class Arena* arena, Team scoringTeam, void* userInfo);
