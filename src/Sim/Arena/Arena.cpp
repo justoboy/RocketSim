@@ -779,6 +779,18 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
 	return car;
 }
 
+#ifdef RS_PROF
+namespace RSProf {
+	Acc carsPre, padsPre, ballPre, bullet, carPost, padsCheck, padsPost, ballPost, scored;
+	void Dump() {
+		auto avg = [](Acc& a) { return a.n ? a.us / a.n : 0.0; };
+		printf(
+			"[RSProf] carsPre=%.3f padsPre=%.3f ballPre=%.3f bullet=%.3f carPost=%.3f padsCheck=%.3f padsPost=%.3f ballPost=%.3f scored=%.3f (us/tick avg)\n",
+			avg(carsPre), avg(padsPre), avg(ballPre), avg(bullet), avg(carPost), avg(padsCheck), avg(padsPost), avg(ballPost), avg(scored));
+	}
+}
+#endif
+
 void Arena::Step(int ticksToSimulate) {
 	_stop = false;
 
@@ -797,17 +809,24 @@ void Arena::Step(int ticksToSimulate) {
 		bool ballOnly = _cars.empty();
 
 		bool hasArenaStuff = (gameMode != GameMode::THE_VOID);
+
+#ifdef RS_PROF
+		auto _t0 = RSProf::Now();
+#endif
 		
 		for (Car* car : _cars)
 			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig);
+		RS_PROF_ACC(RSProf::carsPre, _t0, _t0 = RSProf::Now());
 
 		if (hasArenaStuff && !ballOnly) {
 			for (BoostPad* pad : _boostPads)
 				pad->_PreTickUpdate(tickTime);
 		}
+		RS_PROF_ACC(RSProf::padsPre, _t0, _t0 = RSProf::Now());
 
 		// Update ball
 		ball->_PreTickUpdate(gameMode, tickTime, _cars);
+		RS_PROF_ACC(RSProf::ballPre, _t0, _t0 = RSProf::Now());
 
 		// Ball-attach modes: the carrier's boost is locked to 0 while it carries the puck.
 		if ((gameMode == GameMode::SPIKE_RUSH || gameMode == GameMode::GRIDIRON) && ball->_internalState.attachInfo.active) {
@@ -819,6 +838,7 @@ void Arena::Step(int ticksToSimulate) {
 
 		// Update world
 		_bulletWorld.stepSimulation(tickTime, 0, tickTime);
+		RS_PROF_ACC(RSProf::bullet, _t0, _t0 = RSProf::Now());
 
 		for (Car* car : _cars) {
 			car->_PostTickUpdate(gameMode, tickTime, _mutatorConfig);
@@ -834,6 +854,7 @@ void Arena::Step(int ticksToSimulate) {
 				}
 			}
 		}
+		RS_PROF_ACC(RSProf::carPost, _t0, _t0 = RSProf::Now());
 
 		if (hasArenaStuff && !ballOnly)
 		{
@@ -843,8 +864,10 @@ void Arena::Step(int ticksToSimulate) {
 					_boostPickupCallback.func(this, pad->_internalState.curLockedCar, pad, _boostPickupCallback.userInfo);
 			}
 		}
+		RS_PROF_ACC(RSProf::padsPost, _t0, _t0 = RSProf::Now());
 
 		ball->_FinishPhysicsTick(_mutatorConfig);
+		RS_PROF_ACC(RSProf::ballPost, _t0, _t0 = RSProf::Now());
 
 		// Sync tiles state after the tick ends.
 		// We don't want to sync the state on tile damage, 
