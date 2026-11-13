@@ -103,3 +103,53 @@ Recommendation for the learner (RLGymPPO_CPP examplemain.cpp):
   20-core box the example's 4x4=16 is already in the plateau; raising it further buys
   nothing and steals cores from torch. Lowering to ~12 frees headroom if torch-bound.
 - Do NOT migrate the thread loop into rocketsim: same work, same speed, more coupling.
+
+## custombot (Python reference) env/thread config — comparison (2026-11-13)
+
+User recalled "32 was the best number of envs in the python version." Confirmed in the
+custombot repo. This is the SAME learner shape (batched forward + lockstep env stepping),
+but the bottleneck that SETS the optimal env count is different, so the number does not
+port directly.
+
+### What custombot actually used
+- `train_rl_ab2.py` defaults: `--n-envs 32` and `--matches-per-epoch 32` (coupled equal).
+- `custombot/train_config.py` `n_envs: 32`; rollout primitive is
+  `LeagueRollout.run_episode_multi` (custombot/rollout.py): steps n_envs episodes in
+  lockstep, ONE grouped forward per decision step (batch = 2*n_envs), then row-slices.
+- `tick_skip = 8` (8 physics ticks per decision step) — same 120Hz->15Hz decimation as ours.
+- The coupled sweep over {8,16,32,64} (warmup-discard, shuffled order, 3 reps) found n=32
+  the consistent peak; n=64 regressed.
+
+### WHY 32 was the peak there (the key difference)
+custombot's BOTTLENECK_ANALYSIS.md is explicit: "Collection is dominated by per-step GPU
+launch/sync overhead, NOT physics: bare env.step with NO model runs 366-632 decision-
+steps/s, but the batch-2 forward path runs only 89-107 steps/s." In the Python stack the
+physics is cheap relative to per-step Python + per-step GPU launch/sync cost. Batching
+more envs into ONE grouped forward amortizes that fixed per-step overhead across all envs,
+so throughput climbs with n_envs until the wide forward (2*n_envs rows) + the n_envs-wide
+physics step per tick themselves become the limiter (~32). Past 32 the wide forward +
+physics step dominate and it turns over.
+
+### Why the number does NOT port to the C++ learner
+In RLGymPPO_CPP the physics IS the dominant per-step cost (~88% of step, measured), and it
+saturates at ~8-16 worker threads (my scratch.cpp sweep above). The Python "32" was set by
+GPU-launch-overhead amortization, a constraint that does not exist in the C++ learner (torch
+inference is already one batched forward across all games). So:
+- Python optimum (32) was raised ABOVE the physics-core knee because physics was NOT the
+  bottleneck there; more envs = free amortization of the real bottleneck (GPU sync).
+- C++ optimum is bounded by the physics-core knee (~8-16) because physics IS the bottleneck;
+  extra envs past core count just queue behind the same cores.
+
+Net: the example's 4x4=16 is already at/above the C++ physics knee. Raising it toward 32
+would NOT reproduce the Python win, because the lever that made 32 win in Python (amortize
+GPU launch overhead) is absent in C++. The C++ ceiling is core count, not launch overhead.
+
+### Actionable conclusion
+- Do NOT copy n_envs=32 into the C++ learner expecting a 2x. The physics saturates ~8-16.
+- The real C++ lever (if torch-bound, not physics-bound) is to keep total games ~= logical
+  cores minus torch reserve, which 16 already satisfies. If profiling the live learner shows
+  it is torch-inference-bound (not physics-bound), then MORE games per thread (so each
+  batched forward is wider) could help — that is the C++ analogue of the Python 32 win, and
+  it is a learner-config tune, not a rocketsim change.
+- rocketsim itself: no change warranted. Tier A exhausted; the env-count lever lives in the
+  learner, not the engine.
