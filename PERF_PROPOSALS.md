@@ -54,6 +54,12 @@ RLGymSim_CPP. Re-read this file before acting on any future task.
   provably byte-identical (checksums matched) but measured gain below the ±5% noise
   floor (after: 17.6/15.9/16.1k vs baseline 15.8/18.9/16.6k — overlapping spreads);
   reverted in 5652aec/05684c8. Do not re-raise.
+- [x] FMA contraction (`-mfma -ffp-contract=fast`) | user-approved 2026-11-13, tested,
+  then REVERTED — measured on an identical at-rest state: no-FMA median ~53,400 vs FMA
+  ~51,700 physics-only steps/s (wash, ~3% slower, inside noise). Tick is latency-bound
+  (raycasts + branchy solver), not FLOP-bound. Drift was as expected (seed 12345:
+  obsSum 660377.25→668814.56). Zero speedup for a numerics change = strictly negative
+  trade; reverted dd9d5c2 (main) / b3d3bf5 (cpp-standalone). Do not re-raise.
 
 ## Conclusion
 
