@@ -118,10 +118,8 @@ void btVehicleRL::updateWheelTransformsWS(btWheelInfoRL& wheel) {
 }
 
 float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
-	// NOTE: updateWheelTransformsWS(wheel) is intentionally NOT called here. updateVehicleFirst
-	//	already calls updateWheelTransform(i) (which calls updateWheelTransformsWS) for every wheel
-	//	before this runs, and the chassis transform does not change in between, so recomputing it
-	//	here was a byte-identical redundant recomputation.
+	updateWheelTransformsWS(wheel);
+
 	float depth = -1;
 
 	float suspensionTravel = wheel.m_maxSuspensionTravelCm / 100;
