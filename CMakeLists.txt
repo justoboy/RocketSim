@@ -31,6 +31,10 @@ endif()
 
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
 
+# FMA contraction: approved Tier B numerics change (single-rounding a*b+c). Pin the
+# contraction mode explicitly so behavior doesn't depend on compiler defaults.
+target_compile_options(${PROJECT_NAME} PRIVATE -mfma -ffp-contract=fast)
+
 set_target_properties(${PROJECT_NAME} PROPERTIES C_VISIBILITY_PRESET hidden)
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_VISIBILITY_PRESET hidden)
 
