@@ -70,3 +70,36 @@ floating-point ordering or numerics and therefore violates the no-divergence gua
 Per protocol: "this is fine, don't optimize it" is the honest finding for the remaining
 candidates. The wrapper's ~88% physics share can only be reduced by accepting a
 numerics change (Tier B above) — that is the user's decision, not an autonomous edit.
+
+## Thread-scaling measurement (2026-11-13, scratch.cpp harness)
+
+Question: does moving parallelization into rocketsim core help? Answer: no — env-level
+parallelism is already embarrassingly parallel and already done at the learner layer
+(ThreadAgent/ThreadManager). Relocating the std::thread loop into rocketsim changes the
+owner, not the speed. The only *single-env* win would be Bullet's intra-step parallel
+solver (btParallelConstraintSolver + btTaskScheduler, vendored but unused), which is a
+numerics change (Tier B) gated on "learns just as well".
+
+Measured: 16 independent SOCCAR arenas (1 car each, fixed kickoff, zero controls =>
+at-rest deterministic), sharded across T std::threads, stepped in lockstep. Aggregate
+physics ticks/s vs T (min-of-5, i9-10850K 20 logical cores):
+
+  T=1   ~300k ticks/s
+  T=2   ~560k   (~1.9x)
+  T=4   ~1.16M (~3.8x)
+  T=8   ~1.98M (~6.6x, knee)
+  T=16  ~2.5M  (plateau)
+  T=20  ~2.3M  (plateau / slight decline)
+
+Honesty caveat: the at-rest per-tick cost is ~3µs, so thread-spawn + scheduler +
+frequency-scaling noise DOMINATES absolute numbers (single-thread reference disagreed
+with the 1-thread sweep entry by 4.6x on identical work; per-config spread 3-55%). The
+*shape* is reliable (near-linear to ~8, plateau ~16); the exact optimum is not.
+
+Recommendation for the learner (RLGymPPO_CPP examplemain.cpp):
+- Physics is cheap and saturates ~8-16 workers. The learner's real SPS ceiling is torch
+  policy inference + obs build on the collection threads, NOT raw physics.
+- Size numThreads*numGamesPerThread to (logical cores minus reserve for torch). On a
+  20-core box the example's 4x4=16 is already in the plateau; raising it further buys
+  nothing and steals cores from torch. Lowering to ~12 frees headroom if torch-bound.
+- Do NOT migrate the thread loop into rocketsim: same work, same speed, more coupling.
