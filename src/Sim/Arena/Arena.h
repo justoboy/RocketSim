@@ -22,20 +22,22 @@
 RS_NS_START
 
 // TEMPORARY profiling instrumentation (perf engagement) - gated behind RS_PROF
+// Uses QPC + volatile storage to survive -O3 (chrono::steady_clock is optimized away).
 #ifdef RS_PROF
 #include <cstdio>
-#include <chrono>
+#include <windows.h>
 namespace RSProf {
-	struct Acc { double us = 0; uint64_t n = 0; };
+	struct Acc { volatile double us = 0; volatile uint64_t n = 0; };
 	extern Acc carsPre, padsPre, ballPre, bullet, carPost, padsCheck, padsPost, ballPost, scored;
-	inline double Dur(std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
-		return std::chrono::duration<double, std::micro>(b - a).count();
-	}
 	inline void AccAdd(Acc& a, double us) { a.us += us; a.n++; }
-	inline auto Now() { return std::chrono::steady_clock::now(); }
+	inline LONGLONG Now() { LONGLONG t; QueryPerformanceCounter((LARGE_INTEGER*)&t); return t; }
+	inline double QpcUs(LONGLONG a, LONGLONG b) {
+		static volatile LONGLONG freq = [](){ LONGLONG f; QueryPerformanceFrequency((LARGE_INTEGER*)&f); return f; }();
+		return (double)(b - a) / (double)freq * 1e6;
+	}
 	void Dump();
 }
-#define RS_PROF_ACC(acc, t0, t1) ::RocketSim::RSProf::AccAdd(acc, ::RocketSim::RSProf::Dur(t0, t1))
+#define RS_PROF_ACC(acc, t0, t1) { ::RocketSim::RSProf::AccAdd(acc, ::RocketSim::RSProf::QpcUs(t0, t1)); t0 = ::RocketSim::RSProf::Now(); }
 #else
 #define RS_PROF_ACC(acc, t0, t1)
 #endif
