@@ -4,6 +4,7 @@
 #include "../Ball/Ball.h"
 #include "../BoostPad/BoostPad.h"
 #include "../CollisionMasks.h"
+#include "../../RsProf.h"
 
 #include "../../CollisionMeshFile/CollisionMeshFile.h"
 #include "../BoostPad/BoostPadGrid/BoostPadGrid.h"
@@ -20,28 +21,6 @@
 #include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btDefaultCollisionConfiguration.h"
 
 RS_NS_START
-
-// TEMPORARY profiling instrumentation (perf engagement) - gated behind RS_PROF
-// Uses QPC + volatile storage to survive -O3 (chrono::steady_clock is optimized away).
-#ifdef RS_PROF
-#include <cstdio>
-#include <windows.h>
-namespace RSProf {
-	struct Acc { volatile double us = 0; volatile uint64_t n = 0; };
-	extern Acc carsPre, padsPre, ballPre, bullet, carPost, padsCheck, padsPost, ballPost, scored;
-	inline void AccAdd(Acc& a, double us) { a.us += us; a.n++; }
-	inline LONGLONG Now() { LONGLONG t; QueryPerformanceCounter((LARGE_INTEGER*)&t); return t; }
-	inline double QpcUs(LONGLONG a, LONGLONG b) {
-		static volatile LONGLONG freq = [](){ LONGLONG f; QueryPerformanceFrequency((LARGE_INTEGER*)&f); return f; }();
-		return (double)(b - a) / (double)freq * 1e6;
-	}
-	void Dump();
-}
-// Statement form: fully sequenced (capture now, accumulate, then re-stamp the timestamp).
-#define RS_PROF_ACC(acc, t0) do { LONGLONG _rsn = ::RocketSim::RSProf::Now(); ::RocketSim::RSProf::AccAdd(acc, ::RocketSim::RSProf::QpcUs(t0, _rsn)); t0 = _rsn; } while (0)
-#else
-#define RS_PROF_ACC(acc, t0)
-#endif
 
 using BoostPickupEventFn = void(*)(class Arena* arena, Car *car, BoostPad *boostPad, void* userInfo);
 using CarBumpEventFn     = void(*)(class Arena* arena, Car* bumper, Car* victim, bool isDemo, void* userInfo);
