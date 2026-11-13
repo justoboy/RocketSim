@@ -37,9 +37,10 @@ namespace RSProf {
 	}
 	void Dump();
 }
-#define RS_PROF_ACC(acc, t0, t1) { ::RocketSim::RSProf::AccAdd(acc, ::RocketSim::RSProf::QpcUs(t0, t1)); t0 = ::RocketSim::RSProf::Now(); }
+// Statement form: fully sequenced (capture now, accumulate, then re-stamp the timestamp).
+#define RS_PROF_ACC(acc, t0) do { LONGLONG _rsn = ::RocketSim::RSProf::Now(); ::RocketSim::RSProf::AccAdd(acc, ::RocketSim::RSProf::QpcUs(t0, _rsn)); t0 = _rsn; } while (0)
 #else
-#define RS_PROF_ACC(acc, t0, t1)
+#define RS_PROF_ACC(acc, t0)
 #endif
 
 using BoostPickupEventFn = void(*)(class Arena* arena, Car *car, BoostPad *boostPad, void* userInfo);
