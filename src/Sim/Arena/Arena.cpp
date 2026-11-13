@@ -811,22 +811,22 @@ void Arena::Step(int ticksToSimulate) {
 		bool hasArenaStuff = (gameMode != GameMode::THE_VOID);
 
 #ifdef RS_PROF
-		auto _t0 = RSProf::Now();
+		LONGLONG _t0 = RSProf::Now();
 #endif
 		
 		for (Car* car : _cars)
 			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig);
-		RS_PROF_ACC(RSProf::carsPre, _t0, _t0 = RSProf::Now());
+		RS_PROF_ACC(RSProf::carsPre, _t0);
 
 		if (hasArenaStuff && !ballOnly) {
 			for (BoostPad* pad : _boostPads)
 				pad->_PreTickUpdate(tickTime);
 		}
-		RS_PROF_ACC(RSProf::padsPre, _t0, _t0 = RSProf::Now());
+		RS_PROF_ACC(RSProf::padsPre, _t0);
 
 		// Update ball
 		ball->_PreTickUpdate(gameMode, tickTime, _cars);
-		RS_PROF_ACC(RSProf::ballPre, _t0, _t0 = RSProf::Now());
+		RS_PROF_ACC(RSProf::ballPre, _t0);
 
 		// Ball-attach modes: the carrier's boost is locked to 0 while it carries the puck.
 		if ((gameMode == GameMode::SPIKE_RUSH || gameMode == GameMode::GRIDIRON) && ball->_internalState.attachInfo.active) {
@@ -838,7 +838,7 @@ void Arena::Step(int ticksToSimulate) {
 
 		// Update world
 		_bulletWorld.stepSimulation(tickTime, 0, tickTime);
-		RS_PROF_ACC(RSProf::bullet, _t0, _t0 = RSProf::Now());
+		RS_PROF_ACC(RSProf::bullet, _t0);
 
 		for (Car* car : _cars) {
 			car->_PostTickUpdate(gameMode, tickTime, _mutatorConfig);
@@ -854,7 +854,7 @@ void Arena::Step(int ticksToSimulate) {
 				}
 			}
 		}
-		RS_PROF_ACC(RSProf::carPost, _t0, _t0 = RSProf::Now());
+		RS_PROF_ACC(RSProf::carPost, _t0);
 
 		if (hasArenaStuff && !ballOnly)
 		{
@@ -864,10 +864,10 @@ void Arena::Step(int ticksToSimulate) {
 					_boostPickupCallback.func(this, pad->_internalState.curLockedCar, pad, _boostPickupCallback.userInfo);
 			}
 		}
-		RS_PROF_ACC(RSProf::padsPost, _t0, _t0 = RSProf::Now());
+		RS_PROF_ACC(RSProf::padsPost, _t0);
 
 		ball->_FinishPhysicsTick(_mutatorConfig);
-		RS_PROF_ACC(RSProf::ballPost, _t0, _t0 = RSProf::Now());
+		RS_PROF_ACC(RSProf::ballPost, _t0);
 
 		// Sync tiles state after the tick ends.
 		// We don't want to sync the state on tile damage, 
