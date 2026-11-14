@@ -130,26 +130,34 @@ so throughput climbs with n_envs until the wide forward (2*n_envs rows) + the n_
 physics step per tick themselves become the limiter (~32). Past 32 the wide forward +
 physics step dominate and it turns over.
 
-### Why the number does NOT port to the C++ learner
-In RLGymPPO_CPP the physics IS the dominant per-step cost (~88% of step, measured), and it
-saturates at ~8-16 worker threads (my scratch.cpp sweep above). The Python "32" was set by
-GPU-launch-overhead amortization, a constraint that does not exist in the C++ learner (torch
-inference is already one batched forward across all games). So:
-- Python optimum (32) was raised ABOVE the physics-core knee because physics was NOT the
-  bottleneck there; more envs = free amortization of the real bottleneck (GPU sync).
-- C++ optimum is bounded by the physics-core knee (~8-16) because physics IS the bottleneck;
-  extra envs past core count just queue behind the same cores.
+### What actually sets the optimal env count (corrected framing)
+The env count that maximizes throughput is set by WHICH cost is the bottleneck:
+1. Per-step FIXED overhead (Python glue + one GPU launch + device sync per decision step).
+   Paid once per step regardless of envs sharing that step. Batching more envs into one
+   forward amortizes it => more envs = faster => HIGH optimum. This is exactly why Python
+   peaked at 32: BOTTLENECK_ANALYSIS.md shows bare env.step (no model) = 366-632 steps/s but
+   the batch-2 forward path = only 89-107. The forward/overhead, NOT physics, is the wall.
+2. Physics FLOPs themselves. If physics is the real cost, more envs can't beat core count,
+   so optimum ~= core count.
 
-Net: the example's 4x4=16 is already at/above the C++ physics knee. Raising it toward 32
-would NOT reproduce the Python win, because the lever that made 32 win in Python (amortize
-GPU launch overhead) is absent in C++. The C++ ceiling is core count, not launch overhead.
+Python's optimum is high (32) because bottleneck (1) dominates there; physics is not the
+limiter, so envs are the lever.
+
+### Honest status of the C++ learner's optimum (NOT measured)
+I do NOT have a measured C++ learner optimum. The "8-16" figure above is PHYSICS-ONLY thread
+scaling (scratch.cpp): it proves physics saturates at ~core count, but it does NOT prove the
+learner's optimum is 16. The C++ learner still runs a per-step torch forward. If that forward
+is the C++ learner's real bottleneck (the same role the GPU forward played in Python), then
+MORE envs would help C++ too, exactly like Python, and the C++ optimum could also be ~32.
+Earlier drafts of this file claimed "C++ optimum is bounded by the physics-core knee (~16)";
+that was an OVER-CLAIM. Physics-only saturation != learner SPS optimum. The Python 32 came
+from a real coupled sweep on the real loop; I have no equivalent sweep on the C++ learner.
 
 ### Actionable conclusion
-- Do NOT copy n_envs=32 into the C++ learner expecting a 2x. The physics saturates ~8-16.
-- The real C++ lever (if torch-bound, not physics-bound) is to keep total games ~= logical
-  cores minus torch reserve, which 16 already satisfies. If profiling the live learner shows
-  it is torch-inference-bound (not physics-bound), then MORE games per thread (so each
-  batched forward is wider) could help — that is the C++ analogue of the Python 32 win, and
-  it is a learner-config tune, not a rocketsim change.
-- rocketsim itself: no change warranted. Tier A exhausted; the env-count lever lives in the
-  learner, not the engine.
+- To know the C++ learner's real optimum, run the SAME coupled sweep on the real learner:
+  vary numThreads * numGamesPerThread, watch reported SPS, find the knee. That is the only
+  honest way to set it; do not copy 32 OR 16 by assumption.
+- Whether more envs helps C++ depends on whether C++ is forward-bound (then yes, like Python)
+  or physics-bound (then no, capped by cores). That split is unmeasured on the real learner.
+- rocketsim itself: no change warranted. Tier A exhausted; the env/thread-count lever lives
+  in the learner, not the engine.
