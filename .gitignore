@@ -55,3 +55,8 @@ ___*
 python-mtheall/build/
 python-mtheall/dist/
 python-mtheall/RocketSim.egg-info/
+
+# Private design docs + local agent rules/instructions (read from disk, never committed)
+docs_private/
+.kilocode/
+.kilo/
