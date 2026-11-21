@@ -60,3 +60,6 @@ python-mtheall/RocketSim.egg-info/
 docs_private/
 .kilocode/
 .kilo/
+
+# IDE settings (local only, never committed)
+.idea/
