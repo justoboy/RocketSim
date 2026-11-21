@@ -89,7 +89,14 @@ public:
 
 	Car* GetCar(uint32_t id);
 
-	btDiscreteDynamicsWorld _bulletWorld;
+	// IMPORTANT: _bulletWorldParams MUST be declared BEFORE _bulletWorld. C++ destroys
+	// non-static data members in REVERSE declaration order, so this ordering guarantees
+	// _bulletWorld (btDiscreteDynamicsWorld) is destroyed FIRST while its broadphase and
+	// overlapping-pair-cache are still alive. btCollisionWorld::~btCollisionWorld() calls
+	// getBroadphase()->getOverlappingPairCache()->cleanProxyFromPairs()/destroyProxy(); if
+	// those were already freed (the old declaration order) that is a use-after-free which
+	// corrupts the heap. It was silent at one-shot process exit, but corrupts memory once the
+	// Arena is recreated per-episode.
 	struct {
 		btDefaultCollisionConfiguration collisionConfig;
 		btCollisionDispatcher collisionDispatcher;
@@ -97,6 +104,8 @@ public:
 		btBroadphaseInterface* broadphase;
 		btSequentialImpulseConstraintSolver constraintSolver;
 	} _bulletWorldParams;
+
+	btDiscreteDynamicsWorld _bulletWorld;
 
 	std::vector<btRigidBody*> _worldCollisionRBs = {};
 	std::vector<btBvhTriangleMeshShape*> _worldCollisionBvhShapes = {};
